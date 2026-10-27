@@ -1,0 +1,10 @@
+{
+  "name": "barbearia-joao-clubes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test": "node scripts/check-secrets.mjs && node --test tests/*.test.mjs",
+    "dev": "node scripts/dev.mjs"
+  }
+}
