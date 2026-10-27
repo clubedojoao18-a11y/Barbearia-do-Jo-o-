@@ -1,3 +1,4 @@
+import {reserveDeliveryAttempt} from './delivery-budget.js';
 import {professionalWindow} from './agenda-rules.js';
 import {PLATFORM_UI} from './platform-ui.js';
 import {platformRoutes,platformWebhook} from './platform.js';
@@ -46,7 +47,7 @@ export function validDate(d){const t=new Date(d+'T12:00:00Z');return /^\d{4}-\d{
 const all=async(db,q,...p)=>(await db.prepare(q).bind(...p).all()).results;
 const first=(db,q,...p)=>db.prepare(q).bind(...p).first();
 const run=(db,q,...p)=>db.prepare(q).bind(...p).run();
-async function conf(db){const c=await all(db,"SELECT * FROM config WHERE key NOT IN ('payment_credentials','whatsapp_credentials','growth_state','platform_state') AND key NOT LIKE 'catalog_import_%'");return Object.fromEntries(c.map(x=>[x.key,JSON.parse(x.value)]))}
+async function conf(db){const c=await all(db,"SELECT * FROM config WHERE key NOT IN ('payment_credentials','whatsapp_credentials','growth_state','platform_state') AND key NOT LIKE 'catalog_import_%' AND key NOT LIKE 'delivery_quota_%'");return Object.fromEntries(c.map(x=>[x.key,JSON.parse(x.value)]))}
 function plans(c){return PLANS.map(p=>({...p,price:c.prices?.[p.id]??p.price}))}
 function ready(env,c){return !!(env.STRIPE_SECRET_KEY&&env.STRIPE_WEBHOOK_SECRET&&env.STRIPE_CARD_CONFIGURATION&&c.pricesApproved&&((env.PAYMENTS_ENABLED==='true'&&env.STRIPE_WEBHOOK_VALIDATED==='true')||(c.connection?.enabled&&c.connection?.webhookValidated)))}
 function owner(u){return u._workspaceOwner===undefined?u.email.toLowerCase()===OWNER:u._workspaceOwner===true}
@@ -310,7 +311,7 @@ async function waConversation(env,contact,message,url){
  }
  if(pending?.type==='choices'&&/^\d+(?:\s+(CLUBE|AVULSO))?$/.test(text)){
  const selected=pending.choices[Number(text.split(' ')[0])-1];if(!selected)throw err('Escolha um número da lista.');
- const booking={...selected,kind:pending.previous?pending.kind:text.endsWith('CLUBE')?'club':'single'};delete booking.barberName;
+ const booking={...selected,...(pending.dependent?{dependent:pending.dependent}:{}),kind:pending.previous?pending.kind:text.endsWith('CLUBE')?'club':'single'};delete booking.barberName;
  const day=new Date(booking.date+'T12:00:00Z').getUTCDay(),s=serviceCatalog(c,SERVICES).find(x=>x.id===booking.service),price=[2,3].includes(day)?s.discount||s.price:s.price;
  const next={type:'confirm',booking,previous:pending.previous,requestId:message.id,expires:now()+600};await run(db,'UPDATE wa_contacts SET pending=? WHERE wa_id=?',JSON.stringify(next),contact.wa_id);
  return 'Confira: '+s.name+' · '+booking.date+' às '+booking.time+' · '+selected.barberName+' · '+(booking.kind==='gift'?'presente de indicação, sujeito às regras do convite':booking.kind==='club'?'benefício do clube, sujeito à validação do plano':'avulso R$ '+(price/100).toFixed(2).replace('.',','))+'. Envie CONFIRMAR para reservar ou MENU para voltar. Nenhum valor será cobrado pelo agendamento.';
@@ -318,7 +319,7 @@ async function waConversation(env,contact,message,url){
  const cancel=text.match(/^CANCELAR\s+(\d+)$/);if(cancel){allowed(u,c,'cancel');const a=(await waAppointments(db,u))[Number(cancel[1])-1];if(!a)throw err('Envie MEUS HORÁRIOS e escolha o número do agendamento.');await run(db,'UPDATE wa_contacts SET pending=? WHERE wa_id=?',JSON.stringify({type:'cancel',id:a.id,expires:now()+600}),contact.wa_id);return 'Cancelar '+a.date+' às '+a.time+'? Envie CONFIRMAR ou MENU para voltar.'}
  const reschedule=text.match(/^REMARCAR\s+(\d+)\s+(\d{4}-\d{2}-\d{2})$/),book=text.match(/^AGENDAR\s+(\d{4}-\d{2}-\d{2})(?:\s+(\w+))?$/);
  if(book||reschedule){allowed(u,c,'book');let previous,service=book?.[2]?.toLowerCase()||'corte',barber,kind;if(reschedule){allowed(u,c,'cancel');previous=(await waAppointments(db,u))[Number(reschedule[1])-1];if(!previous)throw err('Envie MEUS HORÁRIOS e escolha o número correto.');service=previous.service;barber=previous.barber_id;kind=previous.kind;}
- const choices=await waAvailability(env,c,book?.[1]||reschedule[2],service,barber);await run(db,'UPDATE wa_contacts SET pending=? WHERE wa_id=?',JSON.stringify({type:'choices',choices,previous:previous?.id,kind,expires:now()+600}),contact.wa_id);
+ const choices=await waAvailability(env,c,book?.[1]||reschedule[2],service,barber);await run(db,'UPDATE wa_contacts SET pending=? WHERE wa_id=?',JSON.stringify({type:'choices',choices,previous:previous?.id,dependent:previous?.dependent_id||null,kind,expires:now()+600}),contact.wa_id);
  return choices.length?choices.map((x,i)=>(i+1)+'. '+x.time+' · '+x.barberName).join('\n')+'\nResponda com o número e CLUBE ou AVULSO. Exemplo: 2 CLUBE. Serviços: corte, barba, combo, sobrancelha, pezinho, pele, hidratacao, depilacao. A disponibilidade será conferida novamente ao confirmar.':'Não há horários disponíveis para esse serviço e data. Escolha outro dia.';
  }
  return waMenu();
@@ -356,13 +357,14 @@ async function waDrain(env,limit=20){
  const inWindow=row.last_inbound>now()-86400;let payload={messaging_product:'whatsapp',recipient_type:'individual',to:row.wa_id,type:'text',text:{preview_url:false,body:row.text}};
  if(!inWindow){const template=c.whatsapp?.templates?.[row.kind];if(!template){await run(env.DB,"UPDATE wa_outbox SET status='blocked',error_code='TEMPLATE_REQUIRED' WHERE id=?",row.id);continue}payload={messaging_product:'whatsapp',to:row.wa_id,type:'template',template:{name:template,language:{code:'pt_BR'},components:[{type:'body',parameters:[{type:'text',text:row.text}]}]}};}
  const claim=await run(env.DB,"UPDATE wa_outbox SET status='sending' WHERE id=? AND status='pending'",row.id);if(!claim.meta?.changes&&!claim.changes)continue;
+ if(!await reserveDeliveryAttempt(env.DB,today(),c.automation?.dailyLimit||100)){await run(env.DB,"UPDATE wa_outbox SET status='pending' WHERE id=? AND status='sending'",row.id);break;}
  try{const result=await waGraph(env,env.WHATSAPP_PHONE_NUMBER_ID+'/messages',payload);if(!result.messages?.[0]?.id)throw err('Resposta inválida da Meta.',502);await run(env.DB,"UPDATE wa_outbox SET status='sent',remote_id=?,sent_at=? WHERE id=?",result.messages[0].id,now(),row.id);sent++}catch(e){await run(env.DB,'UPDATE wa_outbox SET status=?,error_code=? WHERE id=?',e.providerCode?'failed':'uncertain',e.providerCode||'DELIVERY_UNKNOWN',row.id)}
  }
  return {sent};
 }
 async function automationTickRoute(req,env){if(req.method!=='POST')throw err('Método não permitido.',405);if(!env.AUTOMATION_JOB_TOKEN||req.headers.get('authorization')!=='Bearer '+env.AUTOMATION_JOB_TOKEN)throw err('Sem permissão.',401);return json(await automationTick(await whatsappEnv(await paymentEnv(env))))}
 async function automationTick(env){
- const settings=await conf(env.DB);await growthTick(env,settings,{all,first,now,today,professionals,serviceCatalog,SERVICES,err,allowed});if(settings.automation?.paused)return {ok:true,sent:0,paused:true};if(!waReady(env)||!settings.whatsapp?.enabled)return {ok:true,sent:0,pendingConnection:!waReady(env),paused:!settings.whatsapp?.enabled};
+ const settings=await conf(env.DB);if(settings.automation?.paused)return {ok:true,sent:0,paused:true};await growthTick(env,settings,{all,first,now,today,professionals,serviceCatalog,SERVICES,err,allowed});if(!waReady(env)||!settings.whatsapp?.enabled)return {ok:true,sent:0,pendingConnection:!waReady(env),paused:!settings.whatsapp?.enabled};
  const id=crypto.randomUUID();await run(env.DB,'INSERT INTO automation_runs(id,started_at,status) VALUES(?,?,?)',id,now(),'running');
  try{
  const day=Number(today().slice(-2));if((settings.automation?.days||[10,20]).includes(day)){const due=await all(env.DB,"SELECT i.id,i.user_id FROM invoices i JOIN wa_contacts w ON w.user_id=i.user_id WHERE i.status IN ('failed','pending') AND i.due_at<=? AND w.consent=1 AND NOT EXISTS(SELECT 1 FROM wa_notifications n WHERE n.reference_id=i.id AND n.kind='payment_failed' AND n.created_at>=?) LIMIT 500",now(),Math.floor(Date.parse(today()+'T00:00:00-03:00')/1000));for(const i of due)await run(env.DB,'INSERT OR IGNORE INTO wa_notifications(id,user_id,kind,reference_id,created_at) VALUES(?,?,?,?,?)','dunning:'+today()+':'+i.id,i.user_id,'payment_failed',i.id,now());}const records=await all(env.DB,"SELECT n.*,c.wa_id,c.consent FROM wa_notifications n JOIN wa_contacts c ON c.user_id=n.user_id JOIN users u ON u.id=n.user_id WHERE n.status='pending' AND n.due_at<=? AND c.consent=1 AND u.disabled=0 LIMIT 50",now());

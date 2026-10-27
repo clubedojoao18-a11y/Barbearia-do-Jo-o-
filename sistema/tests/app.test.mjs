@@ -374,3 +374,33 @@ test('verified paid webhook releases booking after a failed renewal',async()=>{
  assert.equal((await req('/api/appointments',booking(),'client')).status,201);
  }finally{globalThis.fetch=original}
 });
+
+test('WhatsApp rescheduling preserves the dependent of a paid Pai e Filho reservation',async()=>{
+ const mock=mockMeta();try{
+ await linkWa();await req('/api/membership',{plan:'pai-filho',day:20},'client');
+ db.prepare("UPDATE memberships SET status='active',paid_until=? WHERE user_id='client'").run(Math.floor(Date.now()/1000)+864000);
+ const child=(await req('/api/dependents',{name:'Filho Teste'},'client')).data;
+ const old=await req('/api/appointments',{...booking(),service:'corte',kind:'club',dependent:child.id},'client');assert.equal(old.status,201);
+ await waSend('REMARCAR 1 '+nextDate());await waSend('1 CLUBE');await waSend('CONFIRMAR');
+ const replacement=db.prepare("SELECT * FROM appointments WHERE status='scheduled' AND user_id='client'").get();
+ assert.equal(replacement.dependent_id,child.id);assert.equal(replacement.kind,'club');assert.equal(replacement.price,0);
+ assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(old.data.id).status,'canceled');
+ }finally{mock.restore()}
+});
+test('simultaneous WhatsApp processing observes the persisted daily attempt budget',async()=>{
+ const mock=mockMeta();try{
+ await linkWa();const initial=mock.sent.length;assert.equal(initial,1);
+ await req('/api/automation-settings',{paused:false,days:[10,20],dailyLimit:3});
+ const insert=db.prepare("INSERT INTO wa_outbox(id,wa_id,kind,text,created_at) VALUES(?,'5524999999999','reply','Teste de limite',?)");
+ for(let i=0;i<8;i++)insert.run('budget-test-'+i,Math.floor(Date.now()/1000));
+ const results=await Promise.all([req('/api/whatsapp/admin/process',{}),req('/api/whatsapp/admin/process',{})]);
+ assert.ok(results.every(r=>r.status===200));assert.equal(mock.sent.length,3);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM wa_outbox WHERE status='pending'").get().n,6);
+ const config=(await req('/api/manage')).data.config;assert.equal(Object.keys(config).some(x=>x.startsWith('delivery_quota_')),false);
+ }finally{mock.restore()}
+});
+test('global automation pause prevents growth from issuing new benefits or changing analysis',async()=>{
+ await req('/api/me');await req('/api/automation-settings',{paused:true,days:[10,20],dailyLimit:3});
+ const result=await req('/api/whatsapp/admin/process',{});assert.equal(result.status,200);assert.equal(result.data.paused,true);
+ assert.equal(db.prepare("SELECT value FROM config WHERE key='growth_state'").get(),undefined);
+});
