@@ -10,6 +10,28 @@ async function req(path,body,who='owner'){const headers={};if(who){headers['oai-
 async function initClient(name='client'){await req('/api/me',undefined,name);await req('/api/profile',{name:'Cliente Teste',phone:'24999999999'},name)}
 function nextDate(){const d=new Date(Date.now()+86400000*2);return d.toISOString().slice(0,10)}
 const booking=()=>({service:'combo',date:nextDate(),time:'10:00',barber:'owner',kind:'single'});
+test('EU SOU scenario enforces finance permissions and leaves billing unchanged',async()=>{
+ await req('/api/me');await initClient();await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});
+ await req('/api/access',{id:'limited',permissions:{finance:false},disabled:false});
+ const input={founders:10,members:40,monthlyFixedCosts:100000};
+ assert.equal((await req('/api/eusou/scenario',input,'client')).status,403);
+ assert.equal((await req('/api/eusou/scenario',input,'limited')).status,403);
+ const r=await req('/api/eusou/scenario',input);assert.equal(r.status,200);assert.equal(r.data.gross,1350000);assert.equal(r.data.net,1196000);assert.equal(r.data.estimated,true);
+ assert.equal((await req('/api/eusou/scenario',{members:-1})).status,400);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM memberships').get().n,0);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,0);
+});
+test('editorial generation validates dates and permissions without saving or publishing',async()=>{
+ await req('/api/me');await initClient();await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});
+ await req('/api/access',{id:'limited',permissions:{settings:false},disabled:false});
+ const input={project:'eusou',startDate:'2026-10-27',count:7};
+ for(const who of ['client','limited'])assert.equal((await req('/api/editorial/drafts',input,who)).status,403);
+ const r=await req('/api/editorial/drafts',input);assert.equal(r.status,200);assert.equal(r.data.items.length,7);assert.equal(r.data.published,false);assert.equal(r.data.persisted,false);
+ assert.ok(r.data.items.every(x=>x.status==='draft'&&!x.authorized));
+ for(const changes of [{startDate:'2026-02-30'},{count:91},{project:'__proto__'}])assert.equal((await req('/api/editorial/drafts',{...input,...changes})).status,400);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM editorial').get().n,0);
+ const draft=r.data.items[0];const saved=await req('/api/editorial',{project:draft.project,title:draft.title,caption:draft.brief,asset:'',scheduled:'',status:'draft',authorized:false});assert.equal(saved.status,200);assert.equal(saved.data.published,false);
+});
 test('owner is manager; new visitors cannot access management or promote themselves',async()=>{assert.equal((await req('/api/me')).data.user.role,'manager');await initClient();assert.equal((await req('/api/manage',undefined,'client')).status,403);assert.equal((await req('/api/role',{id:'client',role:'barber'},'client')).status,403);assert.equal((await req('/api/me',undefined,null)).status,401)});
 test('payments do not invent approvals and block unconfigured checkout',async()=>{await initClient();assert.equal((await req('/api/me',undefined,'client')).data.paymentsReady,false);assert.equal((await req('/api/membership',{plan:'ouro',day:31},'client')).status,200);assert.equal((await req('/api/checkout',{},'client')).status,503);assert.deepEqual((await req('/api/invoices',undefined,'client')).data,[]);assert.equal((await req('/api/me',undefined,'client')).data.membership.status,'pending')});
 test('booking conflict is atomic; cancel frees every occupied slot',async()=>{await req('/api/me');await initClient();await initClient('other');const a=await req('/api/appointments',booking(),'client');assert.equal(a.status,201);assert.equal((await req('/api/appointments',{...booking(),service:'corte',time:'10:30'},'other')).status,409);assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,1);assert.equal((await req('/api/appointment-status',{id:a.data.id,status:'canceled'},'other')).status,403);assert.equal((await req('/api/appointment-status',{id:a.data.id,status:'canceled'},'client')).status,200);assert.equal((await req('/api/appointments',booking(),'other')).status,201)});

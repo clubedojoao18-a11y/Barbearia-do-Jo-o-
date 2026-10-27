@@ -90,3 +90,11 @@ O proprietário tem acesso ao menu Central de exceções e à API GET /api/syste
 ## Atualização operacional — 27/10/2026
 
 Caixa/estoque, comissões, regras de agenda, remarcação no app, dependentes, lista de espera, área pedagógica EU SOU e planejamento editorial integrados ao mesmo projeto. Migração aditiva `0003_operations`; Node.js com `node:sqlite` para testes locais. Execute `npm test`, `npm run build` e `node scripts/validate-artifact.mjs`. Os módulos do Worker são copiados juntos para o artefato. Veja `docs/ENTREGA-2026-10-27.md` para limites e próximos passos. GitHub não publica alterações automaticamente no Sites.
+
+## Integração dos módulos preparados no GitHub — 27/10/2026
+
+Comparado com GitHub main cadf406561c60f85cfacc388af9c23a275b75674: index.js, operations.js, operations-ui.js, testes base e migrações eram idênticos à fonte Sites 6afa8aa. Foram recuperados os módulos editorial-planner.js e eusou-finance.js e os verificadores/testes adicionais.
+
+O EU SOU agora oferece simulador de mensalidades, taxas e custos aos gestores com permissão financeira. Conteúdo oferece geração de 1 a 90 ideias por temas; uma ideia preenche o formulário para revisão e salvamento no calendário. Não usa IA nem publica no Instagram. Geração não grava registros; o salvamento explícito reutiliza autorização e deduplicação existentes. Valores de simulação não alteram preços ou cobranças. Não há migrações novas nem mudança de credenciais, assinaturas ou configuração Meta/Stripe.
+
+Validação: 63 testes locais, build, validação do artefato, inspeção de migrações e uso das duas telas na prévia. Integrações externas continuam com os limites documentados acima.

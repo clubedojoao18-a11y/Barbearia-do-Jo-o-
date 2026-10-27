@@ -1,3 +1,5 @@
+import {calculateCommunityScenario} from './eusou-finance.js';
+import {editorialDrafts} from './editorial-planner.js';
 // Operational modules reuse the same authenticated identity, permissions and D1 database.
 export function serviceCatalog(c,defaults){return defaults.map(s=>({...s,...c.services?.[s.id]})).concat((c.customServices||[])).filter(s=>s.active!==false)}
 export function bookingRules(c){return {leadMinutes:0,cancelMinutes:0,maxDays:90,...c.bookingRules}}
@@ -11,6 +13,8 @@ export async function operationsRoutes(req,env,url,u,c,h){
  const settings=()=>{manager(u);allowed(u,c,'settings')};
  const urlValue=x=>{if(!x)return '';try{const a=new URL(x);if(a.protocol!=='https:'||a.username||a.password||x.length>2000)throw Error();return a.href}catch{throw err('Use um endereço HTTPS válido.')}};
  const saveConf=async(key,value)=>{await run(db,'INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,JSON.stringify(value));await audit(db,u.id,null,key+'.updated',{});return json({ok:true})};
+ if(p==='/api/eusou/scenario'&&req.method==='POST'){finance();const b=await body(req);try{return json(calculateCommunityScenario(b))}catch(e){if(e instanceof RangeError)throw err(e.message);throw e}}
+ if(p==='/api/editorial/drafts'&&req.method==='POST'){settings();const b=await body(req);try{return json({items:editorialDrafts(b),published:false,persisted:false})}catch(e){if(e instanceof RangeError)throw err(e.message);throw e}}
  if(p==='/api/catalog'&&req.method==='POST'){settings();const b=await body(req);const s={id:text(b.id,40),name:text(b.name,100),price:integer(b.price,100,1000000),minutes:integer(b.minutes,30,480),discount:integer(b.discount??b.price,100,1000000),active:b.active!==false};if(!/^[a-z0-9-]+$/.test(s.id)||s.minutes%30)throw err('Use identificador simples e duração em blocos de 30 minutos.');if(SERVICES.some(x=>x.id===s.id))return saveConf('services',{...c.services,[s.id]:s});const custom=[...(c.customServices||[]).filter(x=>x.id!==s.id),s];if(custom.length>80)throw err('Limite de 80 serviços adicionais.');return saveConf('customServices',custom)}
  if(p==='/api/booking-rules'&&req.method==='POST'){settings();const b=await body(req);return saveConf('bookingRules',{leadMinutes:integer(b.leadMinutes,0,10080),cancelMinutes:integer(b.cancelMinutes,0,10080),maxDays:integer(b.maxDays,1,180)})}
  if(p==='/api/appointment-confirm'&&req.method==='POST'){const b=await body(req),a=await first(db,'SELECT * FROM appointments WHERE id=?',b.id);if(!a||a.user_id!==u.id||a.kind==='block'||a.status!=='scheduled')throw err('Reserva indisponível.',403);await run(db,'UPDATE appointments SET confirmed_at=? WHERE id=?',now(),a.id);return json({ok:true})}

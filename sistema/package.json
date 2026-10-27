@@ -6,6 +6,6 @@
     "build": "bash scripts/build.sh",
     "test": "node scripts/check-secrets.mjs && node --test tests/*.test.mjs",
     "dev": "node scripts/dev.mjs",
-    "readiness": "node scripts/readiness-report.mjs"
+    "readiness": "node scripts/check-migrations.mjs && node scripts/readiness-report.mjs"
   }
 }
