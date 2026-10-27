@@ -5,6 +5,7 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "test": "node scripts/check-secrets.mjs && node --test tests/*.test.mjs",
-    "dev": "node scripts/dev.mjs"
+    "dev": "node scripts/dev.mjs",
+    "readiness": "node scripts/readiness-report.mjs"
   }
 }
