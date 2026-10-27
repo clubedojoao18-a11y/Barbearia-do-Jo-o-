@@ -1,3 +1,4 @@
+import {professionalWindow} from './agenda-rules.js';
 // Growth pilot: one isolated, bounded config record; no schema or customer migration.
 // Monetary ceiling reserves the retail value of both benefits, not an invented cost.
 const KEY='growth_state';
@@ -31,7 +32,7 @@ async function capacity(db,settings,h,c){
  const start=Math.max(minutes(settings.start),open),end=Math.min(minutes(settings.end),close),days=[];
  const allSlots=await h.all(db,'SELECT date,time,barber_id FROM slots WHERE date>=? AND date<=?',h.today(),dateOffset(h.today(),14));
  const busy=new Set(allSlots.map(x=>x.date+'|'+x.time+'|'+x.barber_id));
- for(let i=0;i<=14;i++){const date=dateOffset(h.today(),i);if(!settings.weekdays.includes(dayOf(date)))continue;let total=0,occupied=0;for(const person of people)for(let m=start;m<end;m+=30){const time=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');if(Date.parse(date+'T'+time+':00-03:00')<=Date.now()+(c.bookingRules?.leadMinutes||0)*60000)continue;total++;if(busy.has(date+'|'+time+'|'+person.id))occupied++}days.push({date,weekday:dayOf(date),total,occupied,free:total-occupied,occupancy:total?Math.round(100*occupied/total):100})}
+ for(let i=0;i<=14;i++){const date=dateOffset(h.today(),i);if(!settings.weekdays.includes(dayOf(date)))continue;let total=0,occupied=0;for(const person of people){const individual=professionalWindow(c,person.id,date);if(!individual)continue;for(let m=Math.max(start,minutes(individual.open));m<Math.min(end,minutes(individual.close));m+=30){const time=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');if(Date.parse(date+'T'+time+':00-03:00')<=Date.now()+(c.bookingRules?.leadMinutes||0)*60000)continue;total++;if(busy.has(date+'|'+time+'|'+person.id))occupied++}}days.push({date,weekday:dayOf(date),total,occupied,free:total-occupied,occupancy:total?Math.round(100*occupied/total):100})}
  return {days,total:days.reduce((n,x)=>n+x.total,0),free:days.reduce((n,x)=>n+x.free,0),definition:'Blocos de 30 minutos na janela promocional, considerando profissionais, reservas e bloqueios atuais. Não mede demanda não registrada.'};
 }
 async function analyze(db,c,state,h){

@@ -10,6 +10,36 @@ async function req(path,body,who='owner'){const headers={};if(who){headers['oai-
 async function initClient(name='client'){await req('/api/me',undefined,name);await req('/api/profile',{name:'Cliente Teste',phone:'24999999999'},name)}
 function nextDate(){const d=new Date(Date.now()+86400000*2);return d.toISOString().slice(0,10)}
 const booking=()=>({service:'combo',date:nextDate(),time:'10:00',barber:'owner',kind:'single'});
+test('individual hours constrain server bookings and availability without altering old reservations',async()=>{
+ await req('/api/me');await initClient();const a=(await req('/api/appointments',booking(),'client')).data;
+ const day=new Date(nextDate()+'T12:00:00Z').getUTCDay();assert.equal((await req('/api/professional-hours',{barber:'owner',days:[day],open:'13:00',close:'17:00'})).status,200);
+ const busy=(await req('/api/slots?date='+nextDate()+'&barber=owner',undefined,'client')).data;assert.ok(busy.some(x=>x.time==='11:00'));
+ assert.equal((await req('/api/appointments',{...booking(),time:'11:00'},'client')).status,400);assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,201);
+ assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(a.id).status,'scheduled');
+ await req('/api/professional-hours',{barber:'owner',days:[],open:'09:00',close:'20:00'});assert.equal((await req('/api/appointments',{...booking(),time:'15:00'},'client')).status,400);
+ assert.equal((await req('/api/professional-hours',{barber:'owner',days:[day],open:'09:00',close:'20:00'},'client')).status,403);
+});
+test('multi-day vacation blocks are atomic, preserve conflicts and restrict customers',async()=>{
+ await req('/api/me');await initClient();const date=nextDate(),tomorrow=new Date(Date.parse(date+'T12:00:00Z')-86400000).toISOString().slice(0,10);
+ assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:date,barber:'owner'},'client')).status,403);
+ await req('/api/appointments',booking(),'client');assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:date,barber:'owner'})).status,409);assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE kind='block'").get().n,0);
+ assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:tomorrow,barber:'owner'})).status,201);assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE date=?').get(tomorrow).n,48);
+ assert.equal((await req('/api/appointments',{...booking(),date:tomorrow},'client')).status,409);
+});
+test('presence confirmation is scoped to the booked customer and does not complete the service',async()=>{
+ await req('/api/me');await initClient();await initClient('other');const a=(await req('/api/appointments',booking(),'client')).data;
+ assert.equal((await req('/api/appointment-confirm',{id:a.id},'other')).status,403);assert.equal((await req('/api/appointment-confirm',{id:a.id},'client')).status,200);
+ const row=db.prepare('SELECT status,confirmed_at FROM appointments WHERE id=?').get(a.id);assert.equal(row.status,'scheduled');assert.ok(row.confirmed_at);
+});
+test('catalog import is bounded, atomic and idempotent with auditable stock movements',async()=>{
+ await req('/api/me');await initClient();const rows=[{name:'Pomada importada',price:3500,cost:1500,stock:10,minimum:2},{name:'Balm importado',price:4500,cost:2000,stock:5,minimum:1}];
+ assert.equal((await req('/api/products/import',{rows},'client')).status,403);assert.equal((await req('/api/products/import',{rows})).status,200);assert.equal((await req('/api/products/import',{rows})).data.replayed,true);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,2);assert.equal(db.prepare('SELECT SUM(stock) n FROM products').get().n,15);
+ assert.equal((await req('/api/products/import',{rows:[{...rows[0],name:'Produto novo'},{...rows[0]}]})).status,409);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,2);
+ assert.equal((await req('/api/operations')).data.stockMovements.length,2);
+ assert.equal((await req('/api/products/import',{rows:Array(41).fill(rows[0])})).status,400);
+ assert.equal(Object.keys((await req('/api/manage')).data.config).some(k=>k.startsWith('catalog_import_')),false);
+});
 async function growthClient(id,phone){await initClient(id);await req('/api/profile',{name:'Cliente '+id,phone},id)}
 function growthHistory(id){for(let i=0;i<2;i++)db.prepare("INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind,status) VALUES(?,?,?,'2026-01-01',?,'corte',30,4000,'single','done')").run('history-'+id+'-'+i,id,'owner',i?'10:00':'09:00')}
 const growthSettings=(overrides={})=>({enabled:true,monthlyBudget:6500,monthlyLimit:1,validDays:14,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'12:00',occupancyCeiling:60,...overrides});
@@ -295,3 +325,52 @@ test('editorial detects duplicates and never claims external publication',async(
 test('dependent cannot be used by another account and child does not receive beard benefit',async()=>{await req('/api/me');await initClient();await initClient('other');await req('/api/membership',{plan:'pai-filho-barba',day:10},'client');db.prepare("UPDATE memberships SET status='active',paid_until=? WHERE user_id='client'").run(Math.floor(Date.now()/1000)+864000);const dep=(await req('/api/dependents',{name:'Dependente teste'},'client')).data.id;assert.equal((await req('/api/dependents',undefined,'other')).data.length,0);assert.equal((await req('/api/appointments',{...booking(),kind:'club',dependent:dep},'client')).status,400);assert.equal((await req('/api/appointments',{...booking(),service:'corte',kind:'club',dependent:dep},'client')).status,201);assert.equal((await req('/api/appointments',{...booking(),time:'15:00',dependent:dep},'other')).status,400)});
 test('service catalog changes affect new appointments only',async()=>{await req('/api/me');await initClient();const a=(await req('/api/appointments',{...booking(),service:'corte'},'client')).data;const old=db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id);assert.equal((await req('/api/catalog',{id:'corte',name:'Corte',minutes:60,price:5000,discount:5000})).status,200);assert.deepEqual(db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id),old);const b=(await req('/api/appointments',{...booking(),service:'corte',time:'13:00'},'client')).data;assert.equal(db.prepare('SELECT price FROM appointments WHERE id=?').get(b.id).price,5000);assert.equal(db.prepare('SELECT duration FROM appointments WHERE id=?').get(b.id).duration,60)});
 test('service receipts are idempotent and club benefits cannot be booked as revenue',async()=>{await req('/api/me');await initClient();const a=(await req('/api/appointments',booking(),'client')).data;assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,400);await req('/api/appointment-status',{id:a.id,status:'done'});assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,200);assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,200);assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,1)});
+
+test('overdue club blocks every booking modality and manager booking for the customer',async()=>{
+ await req('/api/me');await initClient();await req('/api/membership',{plan:'ouro',day:20},'client');
+ for(const status of ['past_due','unpaid','active']){
+  db.prepare("UPDATE memberships SET status=?,paid_until=? WHERE user_id='client'").run(status,status==='active'?1:Math.floor(Date.now()/1000)+86400);
+  assert.equal((await req('/api/me',undefined,'client')).data.bookingBlocked,true);
+  for(const kind of ['single','club','gift'])assert.equal((await req('/api/appointments',{...booking(),kind},'client')).status,402);
+  assert.equal((await req('/api/appointments',{...booking(),customer:'client'})).status,402);
+ }
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM slots').get().n,0);
+});
+test('late invoice cannot be bypassed by changing membership and paid records restore access',async()=>{
+ await req('/api/me');await initClient();const n=Math.floor(Date.now()/1000);
+ db.prepare("INSERT INTO invoices(id,user_id,amount,status,due_at,created_at) VALUES('late','client',11985,'pending',?,?)").run(n-1,n-100);
+ await req('/api/membership',{plan:'ouro',day:20},'client');
+ assert.equal((await req('/api/appointments',booking(),'client')).status,402);
+ db.prepare("UPDATE invoices SET status='paid',paid_at=? WHERE id='late'").run(n);
+ assert.equal((await req('/api/me',undefined,'client')).data.bookingBlocked,false);
+ assert.equal((await req('/api/appointments',booking(),'client')).status,201);
+});
+test('overdue reschedule preserves original slots and cancellation stays available',async()=>{
+ await req('/api/me');await initClient();const a=(await req('/api/appointments',booking(),'client')).data;
+ await req('/api/membership',{plan:'ouro',day:20},'client');db.prepare("UPDATE memberships SET status='past_due' WHERE user_id='client'").run();
+ assert.equal((await req('/api/appointment-reschedule',{id:a.id,date:nextDate(),time:'15:00'},'client')).status,402);
+ assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(a.id).status,'scheduled');
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(a.id).n,2);
+ assert.equal((await req('/api/appointment-status',{id:a.id,status:'canceled'},'client')).status,200);
+});
+test('WhatsApp confirmation enforces overdue club block for avulso too',async()=>{
+ const mock=mockMeta();try{await linkWa();await req('/api/membership',{plan:'ouro',day:20},'client');db.prepare("UPDATE memberships SET status='past_due' WHERE user_id='client'").run();
+ await waSend('AGENDAR '+nextDate());await waSend('1 AVULSO');await waSend('CONFIRMAR');
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);
+ assert.ok(mock.sent.some(x=>x.text?.body.includes('Regularize em Pagamentos')));
+ }finally{mock.restore()}
+});
+test('verified paid webhook releases booking after a failed renewal',async()=>{
+ await req('/api/me');await initClient();await req('/api/membership',{plan:'ouro',day:20},'client');
+ db.prepare("UPDATE memberships SET subscription_id='sub_gate',customer_id='cus_gate',status='past_due' WHERE user_id='client'").run();
+ const original=globalThis.fetch;const n=Math.floor(Date.now()/1000);let status='past_due';
+ globalThis.fetch=async()=>Response.json({id:'sub_gate',customer:'cus_gate',status,items:{data:[{current_period_end:n+864000}]}});
+ try{const object={id:'in_gate',subscription:'sub_gate',customer:'cus_gate',amount_due:11985,created:n};
+ assert.equal((await signedEvent({id:'evt_gate_failed',type:'invoice.payment_failed',data:{object}})).status,200);
+ assert.equal((await req('/api/appointments',booking(),'client')).status,402);
+ status='active';assert.equal((await signedEvent({id:'evt_gate_paid',type:'invoice.paid',data:{object:{...object,status_transitions:{paid_at:n}}}})).status,200);
+ assert.equal((await req('/api/me',undefined,'client')).data.bookingBlocked,false);
+ assert.equal((await req('/api/appointments',booking(),'client')).status,201);
+ }finally{globalThis.fetch=original}
+});
