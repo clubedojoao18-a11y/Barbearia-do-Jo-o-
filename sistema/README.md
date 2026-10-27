@@ -98,3 +98,7 @@ Comparado com GitHub main cadf406561c60f85cfacc388af9c23a275b75674: index.js, op
 O EU SOU agora oferece simulador de mensalidades, taxas e custos aos gestores com permissão financeira. Conteúdo oferece geração de 1 a 90 ideias por temas; uma ideia preenche o formulário para revisão e salvamento no calendário. Não usa IA nem publica no Instagram. Geração não grava registros; o salvamento explícito reutiliza autorização e deduplicação existentes. Valores de simulação não alteram preços ou cobranças. Não há migrações novas nem mudança de credenciais, assinaturas ou configuração Meta/Stripe.
 
 Validação: 63 testes locais, build, validação do artefato, inspeção de migrações e uso das duas telas na prévia. Integrações externas continuam com os limites documentados acima.
+
+## Identidade visual — 27/10/2026
+
+Nova entrada pública com marrom tabaco, cartão metálico desenhado em CSS, coroa minimalista, apresentação de serviços e perguntas frequentes. Painéis recebem tipografia, contraste, botões, tabelas, indicadores e formulários consistentes. Menu expandido no celular com estado acessível e fechamento por Escape/seleção; navegação inferior preservada. Sem imagens ou fontes externas, alterações no banco, preços ou cobrança. A prévia local permite alternar visitante/proprietário por ?preview=public e ?preview=owner; este controle existe somente em scripts/dev.mjs.
