@@ -10,6 +10,113 @@ async function req(path,body,who='owner'){const headers={};if(who){headers['oai-
 async function initClient(name='client'){await req('/api/me',undefined,name);await req('/api/profile',{name:'Cliente Teste',phone:'24999999999'},name)}
 function nextDate(){const d=new Date(Date.now()+86400000*2);return d.toISOString().slice(0,10)}
 const booking=()=>({service:'combo',date:nextDate(),time:'10:00',barber:'owner',kind:'single'});
+async function growthClient(id,phone){await initClient(id);await req('/api/profile',{name:'Cliente '+id,phone},id)}
+function growthHistory(id){for(let i=0;i<2;i++)db.prepare("INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind,status) VALUES(?,?,?,'2026-01-01',?,'corte',30,4000,'single','done')").run('history-'+id+'-'+i,id,'owner',i?'10:00':'09:00')}
+const growthSettings=(overrides={})=>({enabled:true,monthlyBudget:6500,monthlyLimit:1,validDays:14,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'12:00',occupancyCeiling:60,...overrides});
+async function growthSetup(){await req('/api/me');await growthClient('referrer','21980000001');growthHistory('referrer');const set=await req('/api/growth/settings',growthSettings());assert.equal(set.status,200,JSON.stringify(set.data));const own=(await req('/api/growth',undefined,'referrer')).data;assert.equal(own.invites.length,1);return own.invites[0]}
+function growthDate(gift){for(let i=1;i<=14;i++){const day=new Date(Date.parse(today()+'T12:00:00Z')+i*86400000).toISOString().slice(0,10);if(gift.days.includes(new Date(day+'T12:00:00Z').getUTCDay()))return day}throw Error('No gift date')}
+const growthBooking=gift=>({service:'corte',kind:'gift',date:growthDate(gift),time:'09:00',barber:'owner',growthGift:gift.token});
+test('growth settings require owner authorization and a defined spending ceiling',async()=>{
+ await req('/api/me');await growthClient('client','21980000002');await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});await req('/api/access',{id:'limited',permissions:{finance:false},disabled:false});
+ assert.equal((await req('/api/growth')).data.settings.enabled,false);
+ assert.equal((await req('/api/growth/settings',growthSettings(),'client')).status,403);
+ assert.equal((await req('/api/growth/settings',growthSettings(),'limited')).status,403);
+ assert.equal((await req('/api/growth',undefined,'limited')).status,403);
+ assert.equal((await req('/api/growth/settings',growthSettings({monthlyBudget:0}))).status,400);
+ assert.equal((await req('/api/growth/settings',growthSettings({weekdays:[]}))).status,400);
+ assert.equal((await req('/api/appointments',{...booking(),kind:'gift',growthGift:'invented'},'client')).status,409);
+});
+test('growth automatically prepares bounded invites and keeps tokens outside management configuration',async()=>{
+ const gift=await growthSetup();const before=(await req('/api/growth')).data;
+ assert.equal(before.analysis.budget.reserved,6500);assert.equal(before.analysis.budget.remaining,0);
+ assert.equal(JSON.stringify(before).includes(gift.token),false);assert.equal((await req('/api/manage')).data.config.growth_state,undefined);
+ assert.equal((await req('/api/growth/invite',{},'referrer')).data.token,gift.token);
+ await req('/api/growth/analyze',{});assert.equal((await req('/api/growth')).data.analysis.metrics.issued,1);
+ await growthClient('other','21980000003');growthHistory('other');assert.equal((await req('/api/growth/invite',{},'other')).status,409);
+ assert.equal((await req('/api/growth',undefined,'other')).data.invites.length,0);
+});
+test('growth claim rejects self-referral, duplicate phones, existing customers and shared-code reuse',async()=>{
+ const gift=await growthSetup();assert.equal((await req('/api/growth/claim',{token:gift.token},'referrer')).status,409);
+ await growthClient('duplicate','5521980000001');assert.equal((await req('/api/growth/claim',{token:gift.token},'duplicate')).status,409);
+ await growthClient('old','21980000004');growthHistory('old');assert.equal((await req('/api/growth/claim',{token:gift.token},'old')).status,409);
+ await growthClient('guest','21980000005');assert.equal((await req('/api/growth/claim',{token:gift.token},'guest')).status,200);assert.equal((await req('/api/growth/claim',{token:gift.token},'guest')).status,200);
+ await growthClient('other','21980000006');assert.equal((await req('/api/growth/claim',{token:gift.token},'other')).status,409);
+ assert.equal(JSON.stringify((await req('/api/growth',undefined,'guest')).data).includes('inviterPhone'),false);
+});
+test('growth books a single courtesy and unlocks inviter reward only after actual completion',async()=>{
+ const gift=await growthSetup();await growthClient('guest','21980000005');await req('/api/growth/claim',{token:gift.token},'guest');
+ const b=growthBooking(gift);assert.equal((await req('/api/appointments',{...b,service:'hidratacao'},'guest')).status,400);
+ assert.equal((await req('/api/appointments',{...b,time:'14:00'},'guest')).status,400);
+ assert.equal((await req('/api/appointments',{...b,service:'hidratacao',time:'10:00'},'referrer')).status,409);
+ const booked=await req('/api/appointments',b,'guest');assert.equal(booked.status,201,JSON.stringify(booked.data));assert.equal(booked.data.price,0);
+ assert.equal((await req('/api/appointments',{...b,time:'09:30'},'guest')).status,409);
+ const pre=(await req('/api/growth',undefined,'referrer')).data;assert.equal(pre.invites[0].rewardUnlocked,false);
+ assert.equal((await req('/api/appointment-status',{id:booked.data.id,status:'done'})).status,200);
+ assert.equal((await req('/api/growth',undefined,'referrer')).data.invites[0].rewardUnlocked,true);
+ const reward=await req('/api/appointments',{...b,service:'hidratacao',time:'10:00'},'referrer');assert.equal(reward.status,201,JSON.stringify(reward.data));assert.equal(reward.data.price,0);
+ assert.equal((await req('/api/appointment-receipt',{id:booked.data.id})).status,400);
+ const report=(await req('/api/growth')).data.analysis;assert.equal(report.metrics.attended,1);assert.equal(report.metrics.converted,0);assert.equal(report.metrics.returned,0);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM invoices').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,0);
+});
+test('growth shares booking conflicts and restores canceled or rescheduled gifts atomically',async()=>{
+ const gift=await growthSetup();await growthClient('guest','21980000005');await req('/api/growth/claim',{token:gift.token},'guest');await growthClient('other','21980000006');const b=growthBooking(gift);
+ await req('/api/appointments',{...b,kind:'single'},'other');assert.equal((await req('/api/appointments',b,'guest')).status,409);
+ assert.equal((await req('/api/growth',undefined,'guest')).data.invites[0].guestBooked,false);
+ const booked=await req('/api/appointments',{...b,time:'10:00'},'guest');assert.equal(booked.status,201);
+ assert.equal((await req('/api/appointment-reschedule',{id:booked.data.id,date:b.date,time:'09:00'},'guest')).status,409);
+ assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(booked.data.id).status,'scheduled');
+ assert.equal((await req('/api/appointment-reschedule',{id:booked.data.id,date:b.date,time:'10:30'},'guest')).status,200);
+ const current=(await req('/api/growth',undefined,'guest')).data.invites[0].guestAppointment;
+ assert.equal((await req('/api/appointment-status',{id:current,status:'canceled'},'guest')).status,200);
+ assert.equal((await req('/api/growth',undefined,'guest')).data.invites[0].guestBooked,false);
+ assert.equal((await req('/api/appointments',{...b,time:'11:00'},'guest')).status,201);
+});
+test('growth concurrent issuance cannot exceed the monthly value ceiling',async()=>{
+ await req('/api/me');await req('/api/growth/settings',growthSettings());const clients=Array.from({length:6},(_,i)=>'refer'+i);
+ for(let i=0;i<clients.length;i++){await growthClient(clients[i],'2198000010'+i);growthHistory(clients[i])}
+ const results=await Promise.all(clients.map(id=>req('/api/growth/invite',{},id)));
+ assert.equal(results.filter(x=>x.status===200).length,1,JSON.stringify(results));assert.ok(results.every(x=>[200,409].includes(x.status)));
+ const report=(await req('/api/growth')).data.analysis;assert.equal(report.budget.reserved,6500);assert.equal(report.metrics.issued,1);
+});
+test('growth refuses expired gifts and phone changes, and pause preserves issued promises',async()=>{
+ const gift=await growthSetup();await growthClient('guest','21980000005');await req('/api/growth/claim',{token:gift.token},'guest');
+ await req('/api/growth/settings',growthSettings({enabled:false}));
+ await req('/api/profile',{name:'Guest',phone:'21980000007'},'guest');assert.equal((await req('/api/appointments',growthBooking(gift),'guest')).status,409);
+ await req('/api/profile',{name:'Guest',phone:'21980000005'},'guest');assert.equal((await req('/api/appointments',growthBooking(gift),'guest')).status,201);
+ const raw=JSON.parse(db.prepare("SELECT value FROM config WHERE key='growth_state'").get().value);raw.invites[0].expiresAt=1;db.prepare("UPDATE config SET value=? WHERE key='growth_state'").run(JSON.stringify(raw));
+ assert.equal((await req('/api/appointment-reschedule',{id:raw.invites[0].guestAppointment,date:growthDate(gift),time:'10:00'},'guest')).status,409);
+});
+test('operational automation analyzes growth even when WhatsApp is unconfigured',async()=>{
+ await req('/api/me');env.AUTOMATION_JOB_TOKEN='local-automation-token';
+ const result=await worker.fetch(new Request('https://test.example/api/automation/tick',{method:'POST',headers:{Authorization:'Bearer '+env.AUTOMATION_JOB_TOKEN}}),env);assert.equal(result.status,200);
+ const state=JSON.parse(db.prepare("SELECT value FROM config WHERE key='growth_state'").get().value);assert.ok(state.lastAnalysis.checkedAt);assert.equal(state.lastAnalysis.externalMarketing,false);assert.equal(db.prepare('SELECT COUNT(*) n FROM wa_outbox').get().n,0);
+});
+test('growth preserves capacity and does not issue invites into completely blocked windows',async()=>{
+ await req('/api/me');await growthClient('referrer','21980000001');growthHistory('referrer');
+ for(let i=0;i<=14;i++){const d=new Date(Date.parse(today()+'T12:00:00Z')+i*86400000).toISOString().slice(0,10);assert.equal((await req('/api/agenda-block',{date:d,start:'09:00',end:'12:00',barber:'owner'})).status,201)}
+ assert.equal((await req('/api/growth/settings',growthSettings())).status,200);
+ const r=(await req('/api/growth')).data.analysis;assert.equal(r.capacity.free,0);assert.equal(r.metrics.issued,0);
+ assert.equal((await req('/api/growth/invite',{},'referrer')).status,409);
+});
+test('growth stale-state guard rolls back other writes within the transaction',async()=>{
+ await req('/api/me');await req('/api/growth/settings',growthSettings({enabled:false}));const {growthStateStatements}=await import('../worker/growth.js');
+ const raw=db.prepare("SELECT value FROM config WHERE key='growth_state'").get().value,state=JSON.parse(raw);
+ db.prepare("UPDATE config SET value=? WHERE key='growth_state'").run(JSON.stringify({...state,revision:999}));
+ await assert.rejects(env.DB.batch([env.DB.prepare("INSERT INTO ledger(id,project,direction,amount,description,status,date,actor_id,created_at) VALUES('must-rollback','barbearia','expense',100,'Temporary','expected',?,'owner',0)").bind(today()),...growthStateStatements(env.DB,raw,state)]));
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM ledger WHERE id='must-rollback'").get().n,0);
+ assert.equal(JSON.parse(db.prepare("SELECT value FROM config WHERE key='growth_state'").get().value).revision,999);
+});
+test('growth creates an invitation automatically when a client completes the second visit',async()=>{
+ await req('/api/me');await req('/api/growth/settings',growthSettings());await growthClient('referrer','21980000001');growthHistory('referrer');db.prepare("DELETE FROM appointments WHERE id='history-referrer-1'").run();
+ assert.equal((await req('/api/growth',undefined,'referrer')).data.invites.length,0);
+ const a=(await req('/api/appointments',booking(),'referrer')).data;assert.equal((await req('/api/appointment-status',{id:a.id,status:'done'})).status,200);
+ assert.equal((await req('/api/growth',undefined,'referrer')).data.invites.length,1);assert.equal((await req('/api/growth')).data.analysis.budget.reserved,6500);
+});
+test('growth does not reward a referral recorded as a no-show',async()=>{
+ const gift=await growthSetup();await growthClient('guest','21980000005');await req('/api/growth/claim',{token:gift.token},'guest');const a=(await req('/api/appointments',growthBooking(gift),'guest')).data;
+ await req('/api/appointment-status',{id:a.id,status:'no_show'});assert.equal((await req('/api/growth',undefined,'referrer')).data.invites[0].rewardUnlocked,false);
+ assert.equal((await req('/api/appointments',{...growthBooking(gift),service:'hidratacao',time:'10:00'},'referrer')).status,409);
+});
 test('EU SOU scenario enforces finance permissions and leaves billing unchanged',async()=>{
  await req('/api/me');await initClient();await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});
  await req('/api/access',{id:'limited',permissions:{finance:false},disabled:false});
