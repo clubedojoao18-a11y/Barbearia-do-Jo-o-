@@ -1,0 +1,30 @@
+name: Verificar sistema
+on:
+  push:
+    paths:
+      - 'sistema/**'
+      - '.github/workflows/verificar-sistema.yml'
+  pull_request:
+    paths:
+      - 'sistema/**'
+      - '.github/workflows/verificar-sistema.yml'
+permissions:
+  contents: read
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sistema
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Testes
+        run: npm test
+      - name: Compilação
+        run: npm run build
+      - name: Validar artefato
+        run: node scripts/validate-artifact.mjs
