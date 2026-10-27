@@ -86,3 +86,7 @@ Validação: 40 testes locais passam, incluindo canal WhatsApp com API Meta simu
 ## Central de exceções — 26/10/2026
 
 O proprietário tem acesso ao menu Central de exceções e à API GET /api/system/diagnostics. Mostra dependências de configuração e contagens agregadas de filas; não envia mensagens nem cobra clientes. Um agendador declarado sem processamento bem-sucedido recente gera alerta. Processamento recente não comprova execução periódica. Auditoria, evidências e limites: docs/AUDITORIA-2026-10-26.md.
+
+## Atualização operacional — 27/10/2026
+
+Caixa/estoque, comissões, regras de agenda, remarcação no app, dependentes, lista de espera, área pedagógica EU SOU e planejamento editorial integrados ao mesmo projeto. Migração aditiva `0003_operations`; Node.js com `node:sqlite` para testes locais. Execute `npm test`, `npm run build` e `node scripts/validate-artifact.mjs`. Os módulos do Worker são copiados juntos para o artefato. Veja `docs/ENTREGA-2026-10-27.md` para limites e próximos passos. GitHub não publica alterações automaticamente no Sites.
