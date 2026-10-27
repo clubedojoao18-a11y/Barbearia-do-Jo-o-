@@ -24,6 +24,8 @@ jobs:
           node-version: '24'
       - name: Testes
         run: npm test
+      - name: Verificar migrações não destrutivas
+        run: node scripts/check-migrations.mjs
       - name: Compilação
         run: npm run build
       - name: Validar artefato
