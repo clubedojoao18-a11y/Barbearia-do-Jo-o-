@@ -21,3 +21,4 @@ test('EU SOU calculator rejects negative counts and invalid rates',()=>{
  assert.throws(()=>calculateCommunityScenario({paymentPercent:101}),RangeError);
  assert.throws(()=>calculateCommunityScenario({memberPrice:1.5}),RangeError);
 });
+

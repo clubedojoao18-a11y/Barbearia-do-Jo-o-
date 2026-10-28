@@ -36,3 +36,4 @@ test('relatório de prontidão não imprime valores de segredos',()=>{
   assert.equal(r.status,0,r.stderr);
   assert.ok(!r.stdout.includes(secret));
 });
+

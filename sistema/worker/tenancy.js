@@ -29,7 +29,7 @@ export function companyDB(db,company){
 export function companySchemaStatements(db,company){const prefix='w_'+company.id+'_';return TENANT_SCHEMA.split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean).map(sql=>db.prepare(scopeSQL(sql,prefix)))}
 export function companyEnvironment(env,company){
  // A company may use only credentials configured inside its own namespace.
- const clean={DB:companyDB(env.DB,company),CONNECTION_MASTER_KEY:env.CONNECTION_MASTER_KEY,WORKSPACE:company};
+ const clean={DB:companyDB(env.DB,company),CONNECTION_MASTER_KEY:env.CONNECTION_MASTER_KEY,WORKSPACE:company,BUCKET:env.BUCKET};
  return clean;
 }
 export function companyLicensed(company,now=Math.floor(Date.now()/1000)){return !company.paused&&(company.trialUntil>now||company.paidUntil>now)}

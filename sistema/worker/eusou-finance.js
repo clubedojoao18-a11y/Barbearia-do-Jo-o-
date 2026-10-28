@@ -21,3 +21,4 @@ export function calculateCommunityScenario(input) {
   return {totalMembers,gross,estimatedFees,costs,net,marginPercent:gross?Math.round(net/gross*10000)/100:0,
     currency:'BRL',estimated:true,notes:'Simulação. Taxas reais, tributos, estornos e repasses dependem dos contratos e da operação.'};
 }
+

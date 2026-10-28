@@ -11,7 +11,7 @@ export async function effectiveCompany(db,company){if(company.plan!=='fundador')
 
 export async function platformRoutes(req,env,url,u,c,h){
  const p=url.pathname,db=env.DB;if(!p.startsWith('/api/saas/'))return null;
- if(p==='/api/saas/public'&&req.method==='GET'){const {state}=await platformState(db);return h.json({settings:state.settings,limit:20,note:'Cada empresa recebe área própria. Recebimentos de seus clientes exigem sua própria conexão de pagamentos. IA e publicação externa não estão incluídas como integrações ativas.'})}
+ if(p==='/api/saas/public'&&req.method==='GET'){const {state}=await platformState(db);return h.json({settings:state.settings,limit:20,note:'Cada empresa recebe área própria. Recebimentos de seus clientes exigem sua própria conexão de pagamentos. Todas as empresas usam as mesmas funcionalidades. IA, publicação e mensagens exigem conexões próprias e consumo no provedor.'})}
  if(!u)throw h.err('Entre com sua conta para continuar.',401);
  if(p==='/api/saas/me'&&req.method==='GET'){const {state}=await platformState(db);state.companies=await Promise.all(state.companies.map(x=>effectiveCompany(db,x)));return h.json({owner:h.owner(u),name:u.name,email:u.email,companies:state.companies.filter(x=>x.ownerId===u.id).map(details),settings:state.settings,founderEligible:await founder(db,u,h),...(h.owner(u)?{portfolio:state.companies.map(details)}:{})})}
  if(p==='/api/saas/settings'&&req.method==='POST'){

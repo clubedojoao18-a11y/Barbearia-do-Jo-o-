@@ -39,3 +39,4 @@
 
 ## Critérios de conclusão
 Uma funcionalidade só é considerada entregue quando código, testes automatizados, teste real autorizado, monitoramento, instruções operacionais e evidência de implantação estiverem registrados. Itens não verificados permanecem pendentes.
+

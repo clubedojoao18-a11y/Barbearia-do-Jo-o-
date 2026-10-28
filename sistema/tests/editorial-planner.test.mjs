@@ -17,3 +17,4 @@ test('invalid dates and excessive counts are rejected',()=>{
  assert.throws(()=>editorialDrafts({startDate:'2026-02-30'}),RangeError);
  assert.throws(()=>editorialDrafts({startDate:'2026-11-01',count:1000}),RangeError);
 });
+

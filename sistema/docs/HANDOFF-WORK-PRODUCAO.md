@@ -38,3 +38,4 @@ npm run readiness -- --json
 ## Status honesto
 
 Os módulos existentes no repositório **não equivalem** a integrações ativas. Sem acesso à hospedagem, Meta, Stripe e banco de produção, não é possível concluir nem certificar a implantação.
+

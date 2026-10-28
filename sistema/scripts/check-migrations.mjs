@@ -21,3 +21,4 @@ for (const name of files) {
   } else console.log('Verificada:', name);
 }
 if (failed) process.exitCode = 1;
+

@@ -41,3 +41,4 @@ else {
   console.log(report.warning);
 }
 if (results.some(x=>!x.present)) process.exitCode=1;
+
