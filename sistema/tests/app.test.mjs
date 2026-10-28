@@ -462,3 +462,20 @@ test('global automation pause prevents growth from issuing new benefits or chang
  const result=await req('/api/whatsapp/admin/process',{});assert.equal(result.status,200);assert.equal(result.data.paused,true);
  assert.equal(db.prepare("SELECT value FROM config WHERE key='growth_state'").get(),undefined);
 });
+
+test('two work periods reject breaks, crossing services and overlapping configuration',async()=>{
+ await req('/api/me');await initClient();const day=new Date(nextDate()+'T12:00:00Z').getUTCDay();
+ const payload={barber:'owner',days:[day],periods:[{open:'13:00',close:'17:00'},{open:'09:00',close:'12:00'}]};
+ assert.equal((await req('/api/professional-hours',payload)).status,200);
+ assert.equal((await req('/api/appointments',{...booking(),time:'11:30'},'client')).status,400);
+ assert.equal((await req('/api/appointments',{...booking(),time:'12:00'},'client')).status,400);
+ assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,201);
+ assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,409);
+ const busy=(await req('/api/slots?date='+nextDate()+'&barber=owner',undefined,'client')).data;
+ assert.ok(busy.some(x=>x.time==='12:00'));assert.ok(busy.some(x=>x.time==='12:30'));
+ assert.ok(!busy.some(x=>x.time==='10:00'));
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[{open:'09:00',close:'14:00'},{open:'13:00',close:'17:00'}]})).status,400);
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[]})).status,400);
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[{open:'09:00',close:''}]})).status,400);
+ assert.equal((await req('/api/professional-hours',payload,'client')).status,403);
+});

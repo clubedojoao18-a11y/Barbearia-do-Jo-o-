@@ -1,17 +1,24 @@
+const toMinutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));
 export function professionalWindow(c,id,date){
  const global=c.hours||{open:'09:00',close:'20:00'},rule=c.professionalHours?.[id];
- if(!rule)return global;
- if(!rule.days.includes(new Date(date+'T12:00:00Z').getUTCDay()))return null;
- const open=rule.open>global.open?rule.open:global.open,close=rule.close<global.close?rule.close:global.close;
- return open<close?{open,close}:null;
+ if(rule&&!rule.days.includes(new Date(date+'T12:00:00Z').getUTCDay()))return null;
+ const periods=(rule?.periods||[rule||global]).map(p=>({open:p.open>global.open?p.open:global.open,close:p.close<global.close?p.close:global.close})).filter(p=>p.open<p.close);
+ return periods.length?{open:periods[0].open,close:periods.at(-1).close,periods}:null;
+}
+export function withinProfessionalWindow(window,minute,duration=1){
+ return !!window&&(window.periods||[window]).some(p=>minute>=toMinutes(p.open)&&minute+duration<=toMinutes(p.close));
 }
 export async function agendaRulesRoutes(req,env,url,u,c,h){
  const p=url.pathname,db=env.DB;
  if(p==='/api/professional-hours'){
   h.manager(u);h.allowed(u,c,'settings');
   if(req.method==='GET')return h.json(c.professionalHours||{});
-  const b=await h.body(req);if(!(await h.professionals(db,c)).some(x=>x.id===b.barber)||!Array.isArray(b.days)||b.days.length>7||b.days.some(x=>!Number.isInteger(x)||x<0||x>6)||!/^([01]\d|2[0-3]):(00|30)$/.test(b.open||'')||!/^([01]\d|2[0-3]):(00|30)$/.test(b.close||'')||b.open>=b.close)throw h.err('Revise profissional, dias e expediente.');
-  const value={...c.professionalHours,[b.barber]:{days:[...new Set(b.days)],open:b.open,close:b.close}};
+  const b=await h.body(req),periods=b.periods===undefined?[{open:b.open,close:b.close}]:b.periods;
+  const validTime=t=>typeof t==='string'&&/^([01]\d|2[0-3]):(00|30)$/.test(t);
+  if(!(await h.professionals(db,c)).some(x=>x.id===b.barber)||!Array.isArray(b.days)||b.days.length>7||b.days.some(x=>!Number.isInteger(x)||x<0||x>6)||!Array.isArray(periods)||periods.length<1||periods.length>2||periods.some(p=>!p||!validTime(p.open)||!validTime(p.close)||p.open>=p.close))throw h.err('Revise profissional, dias e um ou dois períodos de expediente.');
+  const sorted=periods.map(p=>({open:p.open,close:p.close})).sort((a,b)=>a.open.localeCompare(b.open));
+  if(sorted.length===2&&sorted[0].close>sorted[1].open)throw h.err('Os períodos de expediente não podem se sobrepor.');
+  const value={...c.professionalHours,[b.barber]:{days:[...new Set(b.days)],open:sorted[0].open,close:sorted.at(-1).close,periods:sorted}};
   await h.run(db,'INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','professionalHours',JSON.stringify(value));await h.audit(db,u.id,b.barber,'professional.hours.updated',{});return h.json({ok:true});
  }
  if(p!=='/api/agenda-vacation')return null;
