@@ -1,0 +1,36 @@
+name: Renderizar vídeos
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17,47 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: joao-video-renderer
+  cancel-in-progress: false
+jobs:
+  renderizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sistema
+    env:
+      JOAO_VIDEO_URL: ${{ secrets.JOAO_VIDEO_URL }}
+      JOAO_VIDEO_TOKEN: ${{ secrets.JOAO_VIDEO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Preparar FFmpeg quando conectado
+        shell: bash
+        run: |
+          if [ -n "$JOAO_VIDEO_URL" ] && [ -n "$JOAO_VIDEO_TOKEN" ]; then
+            if ! command -v ffmpeg >/dev/null; then
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq ffmpeg
+            fi
+          fi
+      - name: Processar uma aula autorizada
+        run: node scripts/video-runner.mjs

@@ -20,7 +20,7 @@ export async function verifyIntegrations(env,c,h){
   if(w.WHATSAPP_BUSINESS_ACCOUNT_ID){
    const data=await h.waGraph(w,encodeURIComponent(w.WHATSAPP_BUSINESS_ACCOUNT_ID)+'/message_templates?fields=name,status,language,components&limit=100');
    result.templates=Object.entries(c.whatsapp?.templates||{}).map(([kind,name])=>{const template=data.data?.find(t=>t.name===name&&t.language==='pt_BR');const body=template?.components?.find(t=>t.type==='BODY');const parameters=body?.text?.match(/\{\{[^}]+\}\}/g)||[];return {kind,name,approved:template?.status==='APPROVED',compatible:parameters.length===1&&parameters[0]==='{{1}}'&&!template?.components?.some(t=>['HEADER','BUTTONS'].includes(t.type)&&JSON.stringify(t).includes('{{'))}});
-   result.templatesVerified=result.templates.length===4&&result.templates.every(t=>t.name&&t.approved&&t.compatible);
+   result.templatesVerified=result.templates.filter(t=>t.name).length>=4&&result.templates.filter(t=>t.name).every(t=>t.approved&&t.compatible);
    result.templatesTruncated=!!data.paging?.next;
   }else result.templateAction='Informe o ID da conta WhatsApp Business para conferir os modelos na Meta.';
   return result;
