@@ -1,4 +1,4 @@
-import {interpretConversation} from './attendant.js';
+import {testAttendant} from './attendant.js';
 import {createBackup,openBackup} from './backups.js';
 import {verifyIntegrations} from './integration-checks.js';
 
@@ -10,7 +10,7 @@ export async function maintenanceRoutes(req,env,url,h){
  if(expected.length<32||diff)return h.json({error:'Sem permissão.'},401);
  const b=await h.body(req);
  if(b.action==='verify')return h.json(await verifyIntegrations(await h.paymentEnv(env),await h.conf(env.DB),h));
- if(b.action==='ai_smoke'){const result=await interpretConversation(env,h,'Quero ver meus agendamentos',{today:new Date().toISOString().slice(0,10),services:['corte'],appointments:[],choices:[]});const health={verified:result.command==='MEUS HORÁRIOS',checkedAt:h.now(),note:'Interpretação real de uma solicitação sintética, sem dados de clientes.',...(result.health?{failure:result.health}:{})};await env.DB.prepare("INSERT INTO config(key,value) VALUES('studio_attendant_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(JSON.stringify(health)).run();return h.json(health)}
+ if(b.action==='ai_smoke')return h.json(await testAttendant(env,h));
  if(b.action==='backup')return h.json(await createBackup(env));
  if(b.action==='restore_snapshot'){
   if(!/^\d{10}-[a-f0-9-]{36}$/.test(b.id||''))throw h.err('Backup inválido.');

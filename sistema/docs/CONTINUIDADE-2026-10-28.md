@@ -63,3 +63,12 @@ Rollback de código: republicar a versão 16 pelo Sites, preservando o banco e o
 
 - Recuperação ativa de clientes concluída no código: consentimento específico de marketing separado dos avisos operacionais; limites de inatividade, intervalo e destinatários; deduplicação; pausa; revalidação de reserva futura e revogação antes do envio. Cliente autoriza nas preferências ou por ACEITAR OFERTAS e revoga por PARAR OFERTAS/SAIR. Campanha permanece pausada até conexão Meta e aprovação do modelo de retorno. Não houve disparo real.
 - O workflow de validação existente foi mantido, com uma etapa adicional para disponibilizar FFmpeg quando ausente, exigido pelo novo teste de renderização real.
+
+
+### Geração real de IA: pendência externa confirmada
+
+O teste real de interpretação com uma mensagem sintética retornou HTTP 429, código `billing_not_active`. Portanto, a chave e a leitura de modelos funcionam, mas geração de texto, atendimento natural, transcrição e criação de artes dependem da ativação do faturamento OpenAI do projeto da chave existente. Não foi criada uma chave nova nem usado outro projeto para contornar essa condição. O atendimento por comandos continua disponível após conectar o WhatsApp.
+
+### Entrega técnica final
+
+136 testes locais aprovados, incluindo FFmpeg real, isolamento de empresas, recuperação com consentimento, revalidação de reserva e revogação. Build e validação ESM aprovados. Nenhuma migração destrutiva, preço, assinatura ou cliente de produção alterado. Meta e publicação real continuam sem credenciais verificadas; o executor de vídeo exige os dois segredos no GitHub e aulas autorizadas. A primeira compra e a validação de renovação/recuperação real devem ser feitas pelo titular. Os testes de sandbox não equivalem a esses eventos de produção.

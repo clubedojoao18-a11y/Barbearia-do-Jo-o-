@@ -6,6 +6,11 @@ export async function attendantConfigured(env,h){
  const row=await env.DB.prepare("SELECT value FROM config WHERE key='studio_credentials'").first();
  return !!(row&&(await h.openCredentials(JSON.parse(row.value),env)).openai);
 }
+export async function testAttendant(env,h){
+ const result=await interpretConversation(env,h,'Quero ver meus agendamentos',{today:new Date().toISOString().slice(0,10),services:['corte'],appointments:[],choices:[]});
+ const health={verified:result.command==='MEUS HORÁRIOS',checkedAt:Math.floor(Date.now()/1000),note:'Interpretação real de solicitação sintética, sem dados de clientes.',...(result.health?{failure:result.health}:{})};
+ await env.DB.prepare("INSERT INTO config(key,value) VALUES('studio_attendant_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(JSON.stringify(health)).run();return health;
+}
 // The model translates intent only. It cannot confirm, write records, change prices or grant access.
 export async function interpretConversation(env,h,input,context){
  if(!input.trim()||input.length>1200)return {reply:'Escreva seu pedido em até 1.200 caracteres ou envie ATENDENTE para falar com a equipe.'};
