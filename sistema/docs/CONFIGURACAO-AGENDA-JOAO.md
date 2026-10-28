@@ -32,3 +32,15 @@ Fuso horário: America/Sao_Paulo. Profissional: proprietário (identificar ID re
 - Campanhas de captação condicionadas à disponibilidade; não ofertar horários de almoço.
 - Relatório de ocupação diário após 20:00 de segunda a sábado, e após 14:00 domingo.
 - Reavaliação semanal de capacidade e cotas de marketing. Não iniciar envios sem consentimento e conexão Meta validada.
+
+
+## Regra obrigatória de duração dos serviços (confirmada pelo proprietário)
+- **Corte: 45 minutos exatos de reserva.**
+- **Corte + barba: 90 minutos exatos de reserva.**
+- **Serviços extras associados ao atendimento não aumentam a duração reservada.** O profissional deve conseguir realizá-los dentro dos 45 ou 90 minutos do serviço principal. Se não couberem, não confirmar o extra; manter o serviço principal.
+- Aplicar tanto a assinantes quanto a clientes avulsos e a todos os canais (app, WhatsApp, assistente IA e gestão).
+- Valor de extra pode ser adicionado à comanda sem adicionar minutos ao agendamento; separar preço de duração.
+- Nunca deslocar a reserva seguinte, atravessar almoço ou fechamento para acomodar extras.
+- O backend atual usa slots de 30 minutos: verificar e ajustar a granularidade para 15 minutos, ou outra representação correta de intervalos, **antes** de publicar. Não arredondar silenciosamente o corte de 45 para 60 minutos.
+- Testes de regressão: corte 13:15–14:00 permitido; corte 13:30–14:15 negado; combo 12:30–14:00 permitido; combo 13:00–14:30 negado; extras não alteram duração; duas reservas adjacentes não conflitam; regras iguais nos dois canais.
+- Recalcular capacidade real considerando a mistura de cortes (45 min) e combos (90 min), pois 256/mês pressupõe somente cortes.
