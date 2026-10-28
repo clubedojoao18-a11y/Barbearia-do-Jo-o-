@@ -14,7 +14,7 @@ export async function agendaRulesRoutes(req,env,url,u,c,h){
   h.manager(u);h.allowed(u,c,'settings');
   if(req.method==='GET')return h.json(c.professionalHours||{});
   const b=await h.body(req),periods=b.periods===undefined?[{open:b.open,close:b.close}]:b.periods;
-  const validTime=t=>typeof t==='string'&&/^([01]\d|2[0-3]):(00|30)$/.test(t);
+  const validTime=t=>typeof t==='string'&&/^([01]\d|2[0-3]):(00|15|30|45)$/.test(t);
   if(!(await h.professionals(db,c)).some(x=>x.id===b.barber)||!Array.isArray(b.days)||b.days.length>7||b.days.some(x=>!Number.isInteger(x)||x<0||x>6)||!Array.isArray(periods)||periods.length<1||periods.length>2||periods.some(p=>!p||!validTime(p.open)||!validTime(p.close)||p.open>=p.close))throw h.err('Revise profissional, dias e um ou dois períodos de expediente.');
   const sorted=periods.map(p=>({open:p.open,close:p.close})).sort((a,b)=>a.open.localeCompare(b.open));
   if(sorted.length===2&&sorted[0].close>sorted[1].open)throw h.err('Os períodos de expediente não podem se sobrepor.');
@@ -29,7 +29,7 @@ export async function agendaRulesRoutes(req,env,url,u,c,h){
  const group=crypto.randomUUID(),ops=[];
  for(let i=0;i<days;i++){
   const date=new Date(from+i*86400000).toISOString().slice(0,10),id=group+'_'+date;
-  const times=Array.from({length:48},(_,n)=>String(Math.floor(n/2)).padStart(2,'0')+':'+(n%2?'30':'00'));
+  const times=Array.from({length:96},(_,n)=>String(Math.floor(n/4)).padStart(2,'0')+':'+String(n%4*15).padStart(2,'0'));
   ops.push(db.prepare("INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind) VALUES(?,?,?,?,'00:00','block',1440,0,'block')").bind(id,u.id,barber,date));
   ops.push(db.prepare('INSERT INTO slots(barber_id,date,time,appointment_id) SELECT ?,?,value,? FROM json_each(?)').bind(barber,date,id,JSON.stringify(times)));
  }
