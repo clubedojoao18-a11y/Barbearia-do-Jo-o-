@@ -22,7 +22,7 @@ function numeric(x,min,max,err){if(!Number.isSafeInteger(x)||x<min||x>max)throw 
 function validateSettings(b,err){
  if(typeof b.enabled!=='boolean'||!Array.isArray(b.weekdays)||!b.weekdays.length||b.weekdays.length>7)throw err('Escolha dias e estado da campanha.');
  const weekdays=[...new Set(b.weekdays.map(x=>numeric(x,0,6,err)))];
- if(!/^([01]\d|2[0-3]):(00|30)$/.test(b.start||'')||!/^([01]\d|2[0-3]):(00|30)$/.test(b.end||'')||b.start>=b.end)throw err('Escolha uma janela válida, em blocos de 30 minutos.');
+ if(!/^([01]\d|2[0-3]):(00|15|30|45)$/.test(b.start||'')||!/^([01]\d|2[0-3]):(00|15|30|45)$/.test(b.end||'')||b.start>=b.end)throw err('Escolha uma janela válida, em blocos de 15 minutos.');
  const settings={enabled:b.enabled,monthlyBudget:numeric(b.monthlyBudget,0,200000,err),monthlyLimit:numeric(b.monthlyLimit,1,20,err),validDays:numeric(b.validDays,7,30,err),weekdays,start:b.start,end:b.end,occupancyCeiling:numeric(b.occupancyCeiling,10,90,err)};
  if(settings.enabled&&settings.monthlyBudget<=0)throw err('Defina um teto mensal antes de ativar presentes.');
  return settings;
@@ -32,8 +32,8 @@ async function capacity(db,settings,h,c){
  const start=Math.max(minutes(settings.start),open),end=Math.min(minutes(settings.end),close),days=[];
  const allSlots=await h.all(db,'SELECT date,time,barber_id FROM slots WHERE date>=? AND date<=?',h.today(),dateOffset(h.today(),14));
  const busy=new Set(allSlots.map(x=>x.date+'|'+x.time+'|'+x.barber_id));
- for(let i=0;i<=14;i++){const date=dateOffset(h.today(),i);if(!settings.weekdays.includes(dayOf(date)))continue;let total=0,occupied=0;for(const person of people){const individual=professionalWindow(c,person.id,date);if(!individual)continue;for(let m=Math.max(start,minutes(individual.open));m<Math.min(end,minutes(individual.close));m+=30){if(!withinProfessionalWindow(individual,m,30))continue;const time=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');if(Date.parse(date+'T'+time+':00-03:00')<=Date.now()+(c.bookingRules?.leadMinutes||0)*60000)continue;total++;if(busy.has(date+'|'+time+'|'+person.id))occupied++}}days.push({date,weekday:dayOf(date),total,occupied,free:total-occupied,occupancy:total?Math.round(100*occupied/total):100})}
- return {days,total:days.reduce((n,x)=>n+x.total,0),free:days.reduce((n,x)=>n+x.free,0),definition:'Blocos de 30 minutos na janela promocional, considerando profissionais, reservas e bloqueios atuais. Não mede demanda não registrada.'};
+ for(let i=0;i<=14;i++){const date=dateOffset(h.today(),i);if(!settings.weekdays.includes(dayOf(date)))continue;let total=0,occupied=0;for(const person of people){const individual=professionalWindow(c,person.id,date);if(!individual)continue;for(let m=Math.max(start,minutes(individual.open));m<Math.min(end,minutes(individual.close));m+=15){if(!withinProfessionalWindow(individual,m,15))continue;const time=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');if(Date.parse(date+'T'+time+':00-03:00')<=Date.now()+(c.bookingRules?.leadMinutes||0)*60000)continue;total++;if(busy.has(date+'|'+time+'|'+person.id))occupied++}}days.push({date,weekday:dayOf(date),total,occupied,free:total-occupied,occupancy:total?Math.round(100*occupied/total):100})}
+ return {days,total:days.reduce((n,x)=>n+x.total,0),free:days.reduce((n,x)=>n+x.free,0),definition:'Blocos de 15 minutos na janela promocional, considerando profissionais, reservas e bloqueios atuais. Não mede demanda não registrada.'};
 }
 async function analyze(db,c,state,h){
  const today=h.today(),start=dateOffset(today,-29),previous=dateOffset(today,-59);
@@ -72,7 +72,7 @@ async function issueGift(db,u,c,h){
    const prior=state.invites.find(x=>x.inviter===u.id&&x.month===month);if(prior)return {ok:true,token:prior.token,replayed:true};
    const inMonth=state.invites.filter(x=>x.month===month);if(state.invites.length>=400)throw h.err('Limite do piloto alcançado. Revise o histórico antes de ampliar.',409);
    if(inMonth.length>=s.monthlyLimit||inMonth.reduce((n,x)=>n+x.reservedValue,0)+value>s.monthlyBudget)throw h.err('Teto de presentes do mês alcançado.',409);
-   const availability=await capacity(db,s,h,c),choices=availability.days.filter(x=>x.free>=Math.ceil(cut.minutes/30)&&x.occupancy<s.occupancyCeiling);if(!choices.length)throw h.err('Sem capacidade promocional abaixo do teto. Tente em outra data.',409);
+   const availability=await capacity(db,s,h,c),choices=availability.days.filter(x=>x.free>=Math.ceil(cut.minutes/15)&&x.occupancy<s.occupancyCeiling);if(!choices.length)throw h.err('Sem capacidade promocional abaixo do teto. Tente em outra data.',409);
    const byDay=new Map();for(const d of choices){const v=byDay.get(d.weekday)||{free:0,total:0};v.free+=d.free;v.total+=d.total;byDay.set(d.weekday,v)}
    const selected=[...byDay.entries()].sort((a,b)=>b[1].free/b[1].total-a[1].free/a[1].total||a[0]-b[0])[0][0];
    const token=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('').toUpperCase();

@@ -15,8 +15,9 @@ function put(key,x){sql.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CO
 function enable(){env.STRIPE_SECRET_KEY='sk_live_test';env.STRIPE_CARD_CONFIGURATION='pmc_test';env.STRIPE_WEBHOOK_SECRET='test';env.STRIPE_WEBHOOK_VALIDATED='true';env.PAYMENTS_ENABLED='true';put('pricesApproved',true);put('connection',{enabled:true,webhookValidated:true})}
 async function product(stock=2){await request('/api/products',{name:'Pomada de teste',price:3500,cost:1000,minimum:1});const p=sql.prepare('SELECT * FROM products').get();sql.prepare('UPDATE products SET stock=? WHERE id=?').run(stock,p.id);return p}
 test('extras preserve main service duration, calculate server prices, respect conflicts and appear in customer agenda',async()=>{
- await init();const r=await request('/api/appointments',{...booking(),extras:['hidratacao'],price:1},'client');assert.equal(r.status,201,JSON.stringify(r.data));const a=sql.prepare('SELECT * FROM appointments WHERE id=?').get(r.data.id);assert.equal(a.duration,30);const day=new Date(date()+'T12:00:00Z').getUTCDay();assert.equal(a.price,([2,3].includes(day)?3500:4000)+2500);assert.equal(sql.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(a.id).n,1);
- assert.equal((await request('/api/appointments',{...booking(),time:'10:30'},'client')).status,201);
+ await init();const r=await request('/api/appointments',{...booking(),extras:['hidratacao'],price:1},'client');assert.equal(r.status,201,JSON.stringify(r.data));const a=sql.prepare('SELECT * FROM appointments WHERE id=?').get(r.data.id);assert.equal(a.duration,45);const day=new Date(date()+'T12:00:00Z').getUTCDay();assert.equal(a.price,([2,3].includes(day)?3500:4000)+2500);assert.equal(sql.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(a.id).n,3);
+ assert.equal((await request('/api/appointments',{...booking(),time:'10:30'},'client')).status,409);
+ assert.equal((await request('/api/appointments',{...booking(),time:'10:45'},'client')).status,201);
  const listed=(await request('/api/appointments',undefined,'client')).data.find(x=>x.id===a.id);assert.equal(listed.extras[0].name,'Hidratação');assert.equal((await request('/api/appointments',{...booking(),time:'10:00'},'client')).status,409);
  assert.equal((await request('/api/appointments',{...booking(),time:'12:00',extras:['corte']},'client')).status,400);
 });

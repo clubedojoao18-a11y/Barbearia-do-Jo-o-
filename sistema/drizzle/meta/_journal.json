@@ -29,6 +29,13 @@
       "when": 1793073600000,
       "tag": "0003_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793188800000,
+      "tag": "0004_agenda_15_minutes",
+      "breakpoints": true
     }
   ]
 }
