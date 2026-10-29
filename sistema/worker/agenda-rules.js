@@ -1,8 +1,37 @@
 const toMinutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));
+const validTime=t=>typeof t==='string'&&/^([01]\d|2[0-3]):(00|15|30|45)$/.test(t);
+export const JOAO_WEEKLY_PERIODS={
+ 0:[{open:'10:00',close:'14:00'}],
+ 1:[{open:'14:00',close:'20:00'}],
+ 2:[{open:'14:00',close:'20:00'}],
+ 3:[{open:'14:00',close:'20:00'}],
+ 4:[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}],
+ 5:[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}],
+ 6:[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}]
+};
+function sortedPeriods(periods,allowClosed=false){
+ if(!Array.isArray(periods)||periods.length>2||(!allowClosed&&!periods.length)||periods.some(p=>!p||!validTime(p.open)||!validTime(p.close)||p.open>=p.close))throw new Error('Revise um ou dois períodos de expediente por dia.');
+ const sorted=periods.map(p=>({open:p.open,close:p.close})).sort((a,b)=>a.open.localeCompare(b.open));
+ if(sorted.length===2&&sorted[0].close>sorted[1].open)throw new Error('Os períodos de expediente não podem se sobrepor.');
+ return sorted;
+}
+export function normalizeProfessionalHours(b){
+ if(b.weeklyPeriods!==undefined){
+  const weekly=b.weeklyPeriods;
+  if(!weekly||typeof weekly!=='object'||Array.isArray(weekly)||Object.keys(weekly).length!==7||Object.keys(weekly).some(k=>!/^[0-6]$/.test(k)))throw new Error('Informe os sete dias da semana; use períodos vazios nos dias fechados.');
+  const weeklyPeriods=Object.fromEntries(Array.from({length:7},(_,day)=>[day,sortedPeriods(weekly[day],true)]));
+  const days=Object.keys(weeklyPeriods).filter(k=>weeklyPeriods[k].length).map(Number),all=Object.values(weeklyPeriods).flat();
+  return {days,weeklyPeriods,open:all.map(p=>p.open).sort()[0]||'09:00',close:all.map(p=>p.close).sort().at(-1)||'20:00'};
+ }
+ if(!Array.isArray(b.days)||b.days.length>7||b.days.some(x=>!Number.isInteger(x)||x<0||x>6))throw new Error('Revise os dias de expediente.');
+ const periods=sortedPeriods(b.periods===undefined?[{open:b.open,close:b.close}]:b.periods);
+ return {days:[...new Set(b.days)],open:periods[0].open,close:periods.at(-1).close,periods};
+}
 export function professionalWindow(c,id,date){
  const global=c.hours||{open:'09:00',close:'20:00'},rule=c.professionalHours?.[id];
- if(rule&&!rule.days.includes(new Date(date+'T12:00:00Z').getUTCDay()))return null;
- const periods=(rule?.periods||[rule||global]).map(p=>({open:p.open>global.open?p.open:global.open,close:p.close<global.close?p.close:global.close})).filter(p=>p.open<p.close);
+ const day=new Date(date+'T12:00:00Z').getUTCDay();
+ if(rule&&!rule.days.includes(day))return null;
+ const periods=(rule?.weeklyPeriods?.[day]||rule?.periods||[rule||global]).map(p=>({open:p.open>global.open?p.open:global.open,close:p.close<global.close?p.close:global.close})).filter(p=>p.open<p.close);
  return periods.length?{open:periods[0].open,close:periods.at(-1).close,periods}:null;
 }
 export function withinProfessionalWindow(window,minute,duration=1){
@@ -13,12 +42,10 @@ export async function agendaRulesRoutes(req,env,url,u,c,h){
  if(p==='/api/professional-hours'){
   h.manager(u);h.allowed(u,c,'settings');
   if(req.method==='GET')return h.json(c.professionalHours||{});
-  const b=await h.body(req),periods=b.periods===undefined?[{open:b.open,close:b.close}]:b.periods;
-  const validTime=t=>typeof t==='string'&&/^([01]\d|2[0-3]):(00|15|30|45)$/.test(t);
-  if(!(await h.professionals(db,c)).some(x=>x.id===b.barber)||!Array.isArray(b.days)||b.days.length>7||b.days.some(x=>!Number.isInteger(x)||x<0||x>6)||!Array.isArray(periods)||periods.length<1||periods.length>2||periods.some(p=>!p||!validTime(p.open)||!validTime(p.close)||p.open>=p.close))throw h.err('Revise profissional, dias e um ou dois períodos de expediente.');
-  const sorted=periods.map(p=>({open:p.open,close:p.close})).sort((a,b)=>a.open.localeCompare(b.open));
-  if(sorted.length===2&&sorted[0].close>sorted[1].open)throw h.err('Os períodos de expediente não podem se sobrepor.');
-  const value={...c.professionalHours,[b.barber]:{days:[...new Set(b.days)],open:sorted[0].open,close:sorted.at(-1).close,periods:sorted}};
+  const b=await h.body(req);
+  if(!(await h.professionals(db,c)).some(x=>x.id===b.barber))throw h.err('Escolha um profissional válido.');
+  let rule;try{rule=normalizeProfessionalHours(b)}catch(e){throw h.err(e.message)}
+  const value={...c.professionalHours,[b.barber]:rule};
   await h.run(db,'INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value','professionalHours',JSON.stringify(value));await h.audit(db,u.id,b.barber,'professional.hours.updated',{});return h.json({ok:true});
  }
  if(p!=='/api/agenda-vacation')return null;

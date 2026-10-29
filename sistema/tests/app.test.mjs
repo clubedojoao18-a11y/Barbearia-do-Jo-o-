@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import worker,{today,verifySignature} from '../worker/index.js';
+import {JOAO_WEEKLY_PERIODS} from '../worker/agenda-rules.js';
 let db,env;
 function adapter(sqlite){return {prepare(q){let args=[];return {bind(...v){args=v;return this},async first(){return sqlite.prepare(q).get(...args)||null},async all(){return {results:sqlite.prepare(q).all(...args)}},async run(){return sqlite.prepare(q).run(...args)},_run(){return sqlite.prepare(q).run(...args)}}},async batch(statements){sqlite.exec('BEGIN');try{const r=statements.map(s=>s._run());sqlite.exec('COMMIT');return r}catch(e){sqlite.exec('ROLLBACK');throw e}}}}
 beforeEach(()=>{db=new DatabaseSync(':memory:');for(const file of ['0000_clube','0001_permissions','0002_whatsapp','0003_operations'])db.exec(readFileSync(new URL('../drizzle/'+file+'.sql',import.meta.url),'utf8').replaceAll('--> statement-breakpoint',''));env={DB:adapter(db)}});
@@ -513,6 +514,23 @@ test('two work periods reject breaks, crossing services and overlapping configur
  assert.equal((await req('/api/professional-hours',{...payload,periods:[]})).status,400);
  assert.equal((await req('/api/professional-hours',{...payload,periods:[{open:'09:00',close:''}]})).status,400);
  assert.equal((await req('/api/professional-hours',payload,'client')).status,403);
+});
+
+test('weekly hours protect shared booking intervals and old reservations without granting client settings access',async()=>{
+ await req('/api/me');await initClient();const original=(await req('/api/appointments',booking(),'client')).data;
+ const weekly=structuredClone(JOAO_WEEKLY_PERIODS),day=new Date(nextDate()+'T12:00:00Z').getUTCDay();
+ weekly[day]=[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}];
+ assert.equal((await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly},'client')).status,403);
+ assert.equal((await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly})).status,200);
+ for(const time of ['13:30','14:00','15:00'])assert.equal((await req('/api/appointments',{...booking(),time},'client')).status,400);
+ const booked=await req('/api/appointments',{...booking(),time:'16:00'},'client');assert.equal(booked.status,201);
+ const slots=(await req('/api/slots?date='+nextDate()+'&barber=owner',undefined,'client')).data;assert.ok(slots.some(x=>x.time==='14:00'));
+ const before=db.prepare("SELECT value FROM config WHERE key='professionalHours'").get().value;
+ assert.equal((await req('/api/professional-hours',{barber:'owner',weeklyPeriods:{...weekly,9:[]}})).status,400);
+ assert.equal(db.prepare("SELECT value FROM config WHERE key='professionalHours'").get().value,before);
+ weekly[day]=[];assert.equal((await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly})).status,200);
+ assert.equal((await req('/api/appointments',{...booking(),time:'18:00'},'client')).status,400);
+ for(const id of [original.id,booked.data.id])assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(id).status,'scheduled');
 });
 
 
