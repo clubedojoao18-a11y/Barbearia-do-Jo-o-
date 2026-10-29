@@ -1,4 +1,16 @@
-# Barbearia do João — sistema existente
+# Barbearia do João — continuidade
+
+## Estado desta revisão — 29/10/2026
+
+Esta branch recupera a fonte Sites **35**, commit `85b76674bd6ea5d34aaac5031f15d208b31dbf6f`, sobre main GitHub `f023385ef26754ca12f6e4e9b7f4edc25eae884a`. A base recuperada passou em **182 testes**. Não houve merge ou deploy. Os dados abaixo de versão 8/52 testes são histórico e não descrevem a revisão atual.
+
+Leia `sistema/docs/RETOMADA-CLOUD-2026-10-29.md`. Não usar API paga OpenAI, criar chaves ou contratar serviços nesta retomada. O código suporta `AI_API_DISABLED=true`; sua existência não configura a hospedagem. Segredos e dados reais ficam fora do repositório.
+
+Node 24 com node:sqlite e FFmpeg/FFprobe; sem dependências npm externas. Além de npm test, execute npm run build, node scripts/validate-artifact.mjs e npm run readiness dentro de sistema/. Readiness inspeciona somente fontes locais. A prévia permite ?preview=public, ?preview=owner e ?preview=client, com identidade local de teste.
+
+Publicar o ambiente de desenvolvimento não publica o site. GitHub Pages não executa Worker/D1. Toda publicação e ativação comercial exige ação separada.
+
+## Registro histórico
 
 Código em `sistema/`. O `index.html` da raiz é o protótipo antigo e não executa o sistema completo.
 

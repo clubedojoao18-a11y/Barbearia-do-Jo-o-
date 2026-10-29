@@ -6,7 +6,7 @@ import worker,{today,verifySignature} from '../worker/index.js';
 let db,env;
 function adapter(sqlite){return {prepare(q){let args=[];return {bind(...v){args=v;return this},async first(){return sqlite.prepare(q).get(...args)||null},async all(){return {results:sqlite.prepare(q).all(...args)}},async run(){return sqlite.prepare(q).run(...args)},_run(){return sqlite.prepare(q).run(...args)}}},async batch(statements){sqlite.exec('BEGIN');try{const r=statements.map(s=>s._run());sqlite.exec('COMMIT');return r}catch(e){sqlite.exec('ROLLBACK');throw e}}}}
 beforeEach(()=>{db=new DatabaseSync(':memory:');for(const file of ['0000_clube','0001_permissions','0002_whatsapp','0003_operations'])db.exec(readFileSync(new URL('../drizzle/'+file+'.sql',import.meta.url),'utf8').replaceAll('--> statement-breakpoint',''));env={DB:adapter(db)}});
-async function req(path,body,who='owner'){const headers={};if(who){headers['oai-authenticated-user-id']=who;headers['oai-authenticated-user-email']=who==='owner'?'clubedojoao18@gmail.com':who+'@example.com'}if(body!==undefined){headers['Content-Type']='application/json';headers.Origin='https://test.example'}const response=await worker.fetch(new Request('https://test.example'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)}),env);return {status:response.status,data:await response.json()}}
+async function req(path,body,who='owner',profile){const headers={};if(profile)headers['X-Joao-Profile']=profile;if(who){headers['oai-authenticated-user-id']=who;headers['oai-authenticated-user-email']=who==='owner'?'clubedojoao18@gmail.com':who+'@example.com'}if(body!==undefined){headers['Content-Type']='application/json';headers.Origin='https://test.example'}const response=await worker.fetch(new Request('https://test.example'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)}),env);return {status:response.status,data:await response.json()}}
 async function initClient(name='client'){await req('/api/me',undefined,name);await req('/api/profile',{name:'Cliente Teste',phone:'24999999999'},name)}
 test('service maintenance requires its own secret, rejects unknown actions, and returns aggregate inventory only',async()=>{
  env.MAINTENANCE_JOB_TOKEN='local-maintenance-test-'.repeat(3);await initClient();
@@ -17,6 +17,41 @@ test('service maintenance requires its own secret, rejects unknown actions, and 
 });
 function nextDate(){const d=new Date(Date.now()+86400000*2);return d.toISOString().slice(0,10)}
 const booking=()=>({service:'combo',date:nextDate(),time:'10:00',barber:'owner',kind:'single'});
+test('hourly processing is healthy after 45 minutes and stale after the dispatch grace period',async()=>{
+ await req('/api/me');env.AUTOMATION_SCHEDULE_CONFIGURED='true';
+ const timestamp=Math.floor(Date.now()/1000);
+ db.prepare('INSERT INTO automation_runs(id,started_at,finished_at,status) VALUES(?,?,?,?)').run('hourly',timestamp-2800,timestamp-2700,'success');
+ let r=await req('/api/system/diagnostics');
+ assert.equal(r.status,200);assert.equal(r.data.automation.recentSuccessfulProcessing,true);
+ assert.equal(r.data.automation.processingWindowSeconds,4500);
+ assert.equal(r.data.exceptions.some(x=>x.code==='automation_stale'),false);
+ db.prepare('UPDATE automation_runs SET finished_at=?').run(timestamp-4501);
+ r=await req('/api/system/diagnostics');assert.equal(r.data.automation.recentSuccessfulProcessing,false);
+ assert.equal(r.data.exceptions.some(x=>x.code==='automation_stale'),true);
+ db.prepare("UPDATE automation_runs SET finished_at=?,status='failed'").run(timestamp);
+ assert.equal((await req('/api/system/diagnostics')).data.automation.recentSuccessfulProcessing,false);
+ assert.equal((await req('/api/system/diagnostics',undefined,'client')).status,403);
+});
+test('successful model access does not hide a recorded generation billing failure or call generation',async()=>{
+ await req('/api/me');env.OPENAI_API_KEY='local-test-only';
+ const health={verified:false,checkedAt:Math.floor(Date.now()/1000),failure:{status:502,providerStatus:429,code:'billing_not_active'}};
+ db.prepare('INSERT INTO config(key,value) VALUES(?,?)').run('studio_attendant_health',JSON.stringify(health));
+ const real=globalThis.fetch,requests=[];
+ globalThis.fetch=async(url,opts)=>{requests.push(String(url));assert.notEqual(opts.method,'POST');return Response.json({id:'gpt-4.1-mini'})};
+ try{
+  const checked=await req('/api/system/verify',{});assert.equal(checked.status,200);
+  assert.equal(checked.data.ai.verified,true);assert.equal(checked.data.ai.generationTest.verified,false);
+  assert.equal(checked.data.ai.generationTest.failure.code,'billing_not_active');
+  const d=(await req('/api/system/diagnostics')).data;
+  assert.equal(d.aiGeneration.verified,false);assert.equal(d.exceptions.some(x=>x.code==='ai_billing'),true);
+  assert.equal(requests.length,1);assert.ok(requests[0].includes('/models/'));
+  health.verified=true;delete health.failure;
+  db.prepare('UPDATE config SET value=? WHERE key=?').run(JSON.stringify(health),'studio_attendant_health');
+  assert.equal((await req('/api/system/diagnostics')).data.exceptions.some(x=>x.code==='ai_billing'),false);
+  db.prepare('DELETE FROM config WHERE key=?').run('studio_attendant_health');
+  assert.equal((await req('/api/system/diagnostics')).data.exceptions.some(x=>x.code==='ai_generation_unverified'),true);
+ }finally{globalThis.fetch=real}
+});
 test('individual hours constrain server bookings and availability without altering old reservations',async()=>{
  await req('/api/me');await initClient();const a=(await req('/api/appointments',booking(),'client')).data;
  const day=new Date(nextDate()+'T12:00:00Z').getUTCDay();assert.equal((await req('/api/professional-hours',{barber:'owner',days:[day],open:'13:00',close:'17:00'})).status,200);
@@ -30,7 +65,7 @@ test('multi-day vacation blocks are atomic, preserve conflicts and restrict cust
  await req('/api/me');await initClient();const date=nextDate(),tomorrow=new Date(Date.parse(date+'T12:00:00Z')-86400000).toISOString().slice(0,10);
  assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:date,barber:'owner'},'client')).status,403);
  await req('/api/appointments',booking(),'client');assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:date,barber:'owner'})).status,409);assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE kind='block'").get().n,0);
- assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:tomorrow,barber:'owner'})).status,201);assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE date=?').get(tomorrow).n,48);
+ assert.equal((await req('/api/agenda-vacation',{start:tomorrow,end:tomorrow,barber:'owner'})).status,201);assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE date=?').get(tomorrow).n,96);
  assert.equal((await req('/api/appointments',{...booking(),date:tomorrow},'client')).status,409);
 });
 test('presence confirmation is scoped to the booked customer and does not complete the service',async()=>{
@@ -349,7 +384,7 @@ test('Meta verification rejects unsigned requests and wrong challenge tokens',as
 test('WhatsApp requires a single-use account link; profile phone never grants access',async()=>{const mock=mockMeta();try{await req('/api/me');await initClient();await waSetup();await waSend('MEUS HORÁRIOS');assert.match(mock.sent.at(-1).text.body,/código privado/);const code=(await req('/api/whatsapp/link',{},'client')).data.command;await waSend(code);assert.equal((await req('/api/whatsapp/status',undefined,'client')).data.linked,true);await waSend(code,crypto.randomUUID(),'5524888888888');assert.equal(db.prepare("SELECT user_id FROM wa_contacts WHERE wa_id='5524888888888'").get().user_id,null);assert.equal(db.prepare('SELECT COUNT(*) n FROM wa_link_codes').get().n,0);await req('/api/whatsapp/unlink',{},'client');assert.equal((await req('/api/whatsapp/status',undefined,'client')).data.linked,false)}finally{mock.restore()}});
 test('WhatsApp booking is confirmed once, shares app slots, and duplicate webhooks do not send again',async()=>{const mock=mockMeta();try{await linkWa();await waSend('AGENDAR '+nextDate());await waSend('1 AVULSO');assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);const id='wamid_confirm';assert.equal((await waSend('CONFIRMAR',id)).status,200);const a=db.prepare('SELECT * FROM appointments').get();assert.equal(a.user_id,'client');assert.equal((await req('/api/appointments',{...booking(),service:'corte',time:a.time},'client')).status,409);const count=mock.sent.length;await waSend('CONFIRMAR',id);assert.equal(mock.sent.length,count);assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,1);assert.equal(db.prepare('SELECT channel FROM appointment_channels').get().channel,'whatsapp');assert.equal(db.prepare('SELECT COUNT(*) n FROM wa_notifications').get().n,2)}finally{mock.restore()}});
 test('professional blocks are atomic and unavailable in WhatsApp; conflict rollback preserves reservations',async()=>{const mock=mockMeta();try{await linkWa();const result=await req('/api/agenda-block',{date:nextDate(),start:'09:00',end:'10:00',barber:'owner'});assert.equal(result.status,201);assert.equal((await req('/api/appointments',{...booking(),time:'09:30'},'client')).status,409);await waSend('AGENDAR '+nextDate());const choices=JSON.parse(db.prepare('SELECT pending FROM wa_contacts WHERE user_id=?').get('client').pending).choices;assert.ok(choices.every(x=>x.time>='10:00'));assert.equal((await req('/api/agenda-block',{date:nextDate(),start:'09:30',end:'10:30',barber:'owner'})).status,409);assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE kind='block'").get().n,1);assert.equal((await req('/api/agenda-block',{date:nextDate(),start:'12:00',end:'13:00'},'client')).status,403)}finally{mock.restore()}});
-test('WhatsApp reschedule rolls back a conflict and cancels only after replacement succeeds',async()=>{const mock=mockMeta();try{await linkWa();const old=await req('/api/appointments',{...booking(),service:'corte',time:'10:00'},'client');await waSend('REMARCAR 1 '+nextDate());await waSend('1 AVULSO');await req('/api/appointments',{...booking(),service:'corte',time:'09:00'},'client');await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(old.data.id).status,'scheduled');assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(old.data.id).n,1);await waSend('REMARCAR 2 '+nextDate());await waSend('1 AVULSO');await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(old.data.id).status,'canceled');assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE status='scheduled'").get().n,2)}finally{mock.restore()}});
+test('WhatsApp reschedule rolls back a conflict and cancels only after replacement succeeds',async()=>{const mock=mockMeta();try{await linkWa();const old=await req('/api/appointments',{...booking(),service:'corte',time:'10:00'},'client');await waSend('REMARCAR 1 '+nextDate());await waSend('1 AVULSO');await req('/api/appointments',{...booking(),service:'corte',time:'09:00'},'client');await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(old.data.id).status,'scheduled');assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(old.data.id).n,3);await waSend('REMARCAR 2 '+nextDate());await waSend('1 AVULSO');await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(old.data.id).status,'canceled');assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE status='scheduled'").get().n,2)}finally{mock.restore()}});
 test('WhatsApp cancellation frees the shared agenda and human handoff prevents bot mutations',async()=>{const mock=mockMeta();try{await linkWa();const a=await req('/api/appointments',{...booking(),service:'corte'},'client');await waSend('CANCELAR 1');await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(a.data.id).status,'canceled');assert.equal(db.prepare('SELECT COUNT(*) n FROM slots').get().n,0);await waSend('ATENDENTE');const count=mock.sent.length;await waSend('AGENDAR '+nextDate());assert.equal(mock.sent.length,count);assert.equal(db.prepare('SELECT pending FROM wa_contacts WHERE user_id=?').get('client').pending,null);await req('/api/whatsapp/admin/handoff',{wa:'5524999999999',mode:'bot'});await waSend('SAIR');assert.equal(db.prepare('SELECT consent FROM wa_contacts WHERE user_id=?').get('client').consent,0)}finally{mock.restore()}});
 test('WhatsApp financial panel denies clients, barbers and managers lacking financial access',async()=>{await req('/api/me');await initClient();assert.equal((await req('/api/whatsapp/admin',undefined,'client')).status,403);await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});await req('/api/access',{id:'limited',permissions:{finance:false},disabled:false});assert.equal((await req('/api/whatsapp/admin',undefined,'limited')).status,403);assert.equal((await req('/api/whatsapp/admin')).status,200);assert.equal((await worker.fetch(new Request('https://test.example/api/automation/tick',{method:'POST'}),env)).status,401)});
 test('outside the 24 hour window messages require templates; ambiguous delivery is never retried',async()=>{const mock=mockMeta();try{await linkWa();db.prepare('UPDATE wa_contacts SET last_inbound=1').run();db.prepare("INSERT INTO wa_outbox(id,wa_id,kind,text,created_at) VALUES('notification','5524999999999','appointment_reminder','Lembrete',?)").run(Math.floor(Date.now()/1000));await req('/api/whatsapp/admin/process',{});assert.equal(db.prepare("SELECT status FROM wa_outbox WHERE id='notification'").get().status,'blocked');db.prepare('UPDATE wa_contacts SET last_inbound=?').run(Math.floor(Date.now()/1000));db.prepare("INSERT INTO wa_outbox(id,wa_id,kind,text,created_at) VALUES('uncertain','5524999999999','reply','Teste',?)").run(Math.floor(Date.now()/1000));let attempts=0;globalThis.fetch=async()=>{attempts++;throw new Error('Network lost after submission')};await req('/api/whatsapp/admin/process',{});await req('/api/whatsapp/admin/process',{});assert.equal(attempts,1);assert.equal(db.prepare("SELECT status FROM wa_outbox WHERE id='uncertain'").get().status,'uncertain')}finally{mock.restore()}});
@@ -371,7 +406,7 @@ test('scheduler declaration alone never counts as recent successful processing',
  const t=Math.floor(Date.now()/1000);db.prepare("INSERT INTO automation_runs(id,started_at,finished_at,status) VALUES('recent',?,?,'failed')").run(t,t);
  assert.equal((await req('/api/system/diagnostics')).data.automation.recentSuccessfulProcessing,false);
  db.prepare("UPDATE automation_runs SET status='success'").run();r=await req('/api/system/diagnostics');assert.equal(r.data.automation.recentSuccessfulProcessing,true);assert.equal(r.data.exceptions.some(x=>x.code==='automation_stale'),false);
- db.prepare('UPDATE automation_runs SET finished_at=?').run(t-901);assert.equal((await req('/api/system/diagnostics')).data.automation.recentSuccessfulProcessing,false);
+ db.prepare('UPDATE automation_runs SET finished_at=?').run(t-4501);assert.equal((await req('/api/system/diagnostics')).data.automation.recentSuccessfulProcessing,false);
 });
 test('sales atomically reduce stock and record revenue once; insufficient stock rolls back',async()=>{await req('/api/me');const p=(await req('/api/products',{name:'Pomada teste',price:3500,cost:1500,minimum:2})).data.id;assert.equal((await req('/api/stock',{id:'stock-test-001',product:p,quantity:3,reason:'Entrada'})).status,200);const sale={id:'sale-test-001',product:p,quantity:2};assert.equal((await req('/api/sales',sale)).status,200);assert.equal((await req('/api/sales',sale)).status,200);assert.equal(db.prepare('SELECT stock FROM products').get().stock,1);assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,1);assert.equal((await req('/api/sales',{...sale,id:'sale-test-002'})).status,409);assert.equal(db.prepare('SELECT COUNT(*) n FROM sales').get().n,1);assert.equal(db.prepare('SELECT stock FROM products').get().stock,1)});
 test('operations finance and personal accounts enforce permissions and expected money is separate',async()=>{await req('/api/me');await initClient();assert.equal((await req('/api/operations',undefined,'client')).status,403);await req('/api/role',{id:'client',role:'manager'});await req('/api/access',{id:'client',permissions:{finance:false}});assert.equal((await req('/api/operations',undefined,'client')).status,403);await req('/api/access',{id:'client',permissions:{finance:true}});assert.equal((await req('/api/operations?project=pessoal',undefined,'client')).status,403);await req('/api/ledger',{id:'entry-test-001',project:'barbearia',direction:'income',amount:9000,description:'Previsão',status:'expected',date:today()});const x=(await req('/api/operations')).data;assert.equal(x.totals.received,0);assert.equal(x.totals.expectedIncome,9000);await req('/api/ledger',{id:'entry-test-001',receive:true,date:today()});assert.equal((await req('/api/operations')).data.totals.received,9000)});
@@ -381,7 +416,7 @@ test('commission snapshot is immutable after completion and daily fixed is count
 test('EU SOU paid access is enforced for lessons and progress',async()=>{await req('/api/me');await initClient();const course=(await req('/api/eusou/course',{title:'Curso teste',description:'Autorizado',educator:'owner',published:true})).data.id;const lesson=(await req('/api/eusou/lesson',{course,module:'Módulo 1',title:'Aula',content:'Material restrito',position:1,authorized:true})).data.id;assert.equal((await req('/api/eusou',undefined,'client')).data.lessons.length,0);assert.equal((await req('/api/eusou/progress',{lesson},'client')).status,403);assert.equal((await req('/api/eusou/member',{user:'client',role:'member',until:nextDate(),ledger:'invalid'})).status,400);await req('/api/ledger',{id:'eusou-entry-001',project:'eusou',direction:'income',amount:19000,description:'Mensalidade já recebida',status:'received',date:today(),user:'client'});assert.equal((await req('/api/eusou/member',{user:'client',role:'founder',until:nextDate(),ledger:'eusou-entry-001'})).status,200);assert.equal((await req('/api/eusou',undefined,'client')).data.lessons.length,1);assert.equal((await req('/api/eusou/progress',{lesson},'client')).status,200);await initClient('other');assert.equal((await req('/api/eusou',undefined,'other')).data.lessons.length,0)});
 test('editorial detects duplicates and never claims external publication',async()=>{await req('/api/me');const draft={project:'barbearia',title:'Post teste',caption:'Texto autorizado',asset:'',status:'draft',authorized:false};assert.equal((await req('/api/editorial',draft)).status,200);assert.equal((await req('/api/editorial',draft)).status,409);assert.equal((await req('/api/editorial',{...draft,caption:'Outro',status:'approved'})).status,400);const x=(await req('/api/editorial')).data;assert.equal(x.connected,false);assert.equal(x.items.length,1);await initClient();assert.equal((await req('/api/editorial',undefined,'client')).status,403)});
 test('dependent cannot be used by another account and child does not receive beard benefit',async()=>{await req('/api/me');await initClient();await initClient('other');await req('/api/membership',{plan:'pai-filho-barba',day:10},'client');db.prepare("UPDATE memberships SET status='active',paid_until=? WHERE user_id='client'").run(Math.floor(Date.now()/1000)+864000);const dep=(await req('/api/dependents',{name:'Dependente teste'},'client')).data.id;assert.equal((await req('/api/dependents',undefined,'other')).data.length,0);assert.equal((await req('/api/appointments',{...booking(),kind:'club',dependent:dep},'client')).status,400);assert.equal((await req('/api/appointments',{...booking(),service:'corte',kind:'club',dependent:dep},'client')).status,201);assert.equal((await req('/api/appointments',{...booking(),time:'15:00',dependent:dep},'other')).status,400)});
-test('service catalog changes affect new appointments only',async()=>{await req('/api/me');await initClient();const a=(await req('/api/appointments',{...booking(),service:'corte'},'client')).data;const old=db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id);assert.equal((await req('/api/catalog',{id:'corte',name:'Corte',minutes:60,price:5000,discount:5000})).status,200);assert.deepEqual(db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id),old);const b=(await req('/api/appointments',{...booking(),service:'corte',time:'13:00'},'client')).data;assert.equal(db.prepare('SELECT price FROM appointments WHERE id=?').get(b.id).price,5000);assert.equal(db.prepare('SELECT duration FROM appointments WHERE id=?').get(b.id).duration,60)});
+test('service catalog changes affect new appointments only',async()=>{await req('/api/me');await initClient();const a=(await req('/api/appointments',{...booking(),service:'corte'},'client')).data;const old=db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id);assert.equal((await req('/api/catalog',{id:'corte',name:'Corte',minutes:45,price:5000,discount:5000})).status,200);assert.deepEqual(db.prepare('SELECT price,duration FROM appointments WHERE id=?').get(a.id),old);const b=(await req('/api/appointments',{...booking(),service:'corte',time:'13:00'},'client')).data;assert.equal(db.prepare('SELECT price FROM appointments WHERE id=?').get(b.id).price,5000);assert.equal(db.prepare('SELECT duration FROM appointments WHERE id=?').get(b.id).duration,45)});
 test('service receipts are idempotent and club benefits cannot be booked as revenue',async()=>{await req('/api/me');await initClient();const a=(await req('/api/appointments',booking(),'client')).data;assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,400);await req('/api/appointment-status',{id:a.id,status:'done'});assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,200);assert.equal((await req('/api/appointment-receipt',{id:a.id})).status,200);assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,1)});
 
 test('overdue club blocks every booking modality and manager booking for the customer',async()=>{
@@ -409,7 +444,7 @@ test('overdue reschedule preserves original slots and cancellation stays availab
  await req('/api/membership',{plan:'ouro',day:20},'client');db.prepare("UPDATE memberships SET status='past_due' WHERE user_id='client'").run();
  assert.equal((await req('/api/appointment-reschedule',{id:a.id,date:nextDate(),time:'15:00'},'client')).status,402);
  assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(a.id).status,'scheduled');
- assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(a.id).n,2);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(a.id).n,6);
  assert.equal((await req('/api/appointment-status',{id:a.id,status:'canceled'},'client')).status,200);
 });
 test('WhatsApp confirmation enforces overdue club block for avulso too',async()=>{
@@ -461,4 +496,129 @@ test('global automation pause prevents growth from issuing new benefits or chang
  await req('/api/me');await req('/api/automation-settings',{paused:true,days:[10,20],dailyLimit:3});
  const result=await req('/api/whatsapp/admin/process',{});assert.equal(result.status,200);assert.equal(result.data.paused,true);
  assert.equal(db.prepare("SELECT value FROM config WHERE key='growth_state'").get(),undefined);
+});
+
+test('two work periods reject breaks, crossing services and overlapping configuration',async()=>{
+ await req('/api/me');await initClient();const day=new Date(nextDate()+'T12:00:00Z').getUTCDay();
+ const payload={barber:'owner',days:[day],periods:[{open:'13:00',close:'17:00'},{open:'09:00',close:'12:00'}]};
+ assert.equal((await req('/api/professional-hours',payload)).status,200);
+ assert.equal((await req('/api/appointments',{...booking(),time:'11:30'},'client')).status,400);
+ assert.equal((await req('/api/appointments',{...booking(),time:'12:00'},'client')).status,400);
+ assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,201);
+ assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,409);
+ const busy=(await req('/api/slots?date='+nextDate()+'&barber=owner',undefined,'client')).data;
+ assert.ok(busy.some(x=>x.time==='12:00'));assert.ok(busy.some(x=>x.time==='12:30'));
+ assert.ok(!busy.some(x=>x.time==='10:00'));
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[{open:'09:00',close:'14:00'},{open:'13:00',close:'17:00'}]})).status,400);
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[]})).status,400);
+ assert.equal((await req('/api/professional-hours',{...payload,periods:[{open:'09:00',close:''}]})).status,400);
+ assert.equal((await req('/api/professional-hours',payload,'client')).status,403);
+});
+
+
+test('owner switches between management and own barber view without changing identity or stored role',async()=>{
+ const management=(await req('/api/me')).data;
+ const own=await req('/api/me',undefined,'owner','self');
+ assert.equal(own.status,200);assert.equal(own.data.user.id,management.user.id);
+ assert.equal(own.data.user.role,'barber');assert.equal(own.data.isOwner,false);
+ assert.equal(own.data.profileSwitch.selected,'self');assert.equal(own.data.profileSwitch.other,false);
+ assert.equal(db.prepare("SELECT role FROM users WHERE id='owner'").get().role,'manager');
+ assert.equal((await req('/api/access',undefined,'owner','self')).status,403);
+ assert.equal((await req('/api/personal-finance',undefined,'owner','self')).status,200);
+ assert.equal((await req('/api/me')).data.isOwner,true);
+});
+
+test('only authenticated owner can select professional views, even with forged header',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
+ await initClient('manager');await req('/api/role',{id:'manager',role:'manager'});
+ for(const id of ['barber','manager']){
+  assert.equal((await req('/api/me',undefined,id)).data.profileSwitch,null);
+  for(const profile of ['self','professional:owner','professional:barber'])assert.equal((await req('/api/me',undefined,id,profile)).status,403);
+ }
+ assert.equal((await req('/api/me',undefined,null,'self')).status,401);
+ assert.equal((await req('/api/me',undefined,'owner','invalid')).status,400);
+});
+
+test('professional view scopes agenda, preserves personal privacy and attributes actions to owner',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});await initClient();
+ const ownerAppointment=(await req('/api/appointments',booking(),'client')).data;
+ const otherAppointment=(await req('/api/appointments',{...booking(),barber:'barber'},'client')).data;
+ const profile='professional:barber',view=(await req('/api/me',undefined,'owner',profile)).data;
+ assert.equal(view.user.id,'barber');assert.equal(view.isOwner,false);assert.equal(view.profileSwitch.other,true);
+ const agenda=await req('/api/appointments',undefined,'owner',profile);
+ assert.equal(agenda.status,200);assert.deepEqual(agenda.data.map(x=>x.id),[otherAppointment.id]);
+ assert.equal((await req('/api/appointment-status',{id:ownerAppointment.id,status:'done'},'owner',profile)).status,403);
+ assert.equal((await req('/api/appointment-status',{id:otherAppointment.id,status:'done'},'owner',profile)).status,200);
+ const log=db.prepare("SELECT * FROM audit_log WHERE action='profile.action' AND target_id='barber' ORDER BY rowid DESC LIMIT 1").get();assert.equal(log.actor_id,'owner');
+ for(const path of ['/api/personal-finance','/api/access','/api/community-billing','/api/whatsapp/status'])assert.equal((await req(path,undefined,'owner',profile)).status,403);
+ assert.equal((await req('/api/profile',{name:'Changed',phone:'24999999999'},'owner',profile)).status,403);
+ assert.deepEqual((await req('/api/invoices',undefined,'owner',profile)).data,[]);
+ assert.equal((await req('/api/me')).data.user.id,'owner');
+});
+
+test('selection revalidates paused, removed and nonprofessional users on every request',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
+ assert.equal((await req('/api/me',undefined,'owner','professional:barber')).status,200);
+ await req('/api/access',{id:'barber',permissions:{},disabled:true});
+ assert.equal((await req('/api/me',undefined,'owner','professional:barber')).status,409);
+ assert.equal((await req('/api/me',undefined,'owner','professional:missing')).status,409);
+ await initClient('client');assert.equal((await req('/api/me',undefined,'owner','professional:client')).status,409);
+ assert.equal((await req('/api/me')).status,200);
+});
+
+test('management agenda combines professionals and filters by date and professional before limiting',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});await initClient();
+ const insert=db.prepare('INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind,status) VALUES(?,?,?,?,?,?,?,?,?,?)');
+ insert.run('owner-slot','client','owner','2026-11-02','14:00','corte',45,4000,'single','scheduled');
+ insert.run('barber-slot','client','barber','2026-11-02','14:00','combo',90,6000,'single','scheduled');
+ insert.run('barber-block','barber','barber','2026-11-02','16:00','block',60,0,'block','scheduled');
+ // Recent history must not hide the selected day's older records behind LIMIT 500.
+ for(let n=0;n<501;n++)insert.run('history-'+n,'client','owner','2026-11-03','14:00','corte',45,4000,'single','done');
+ let r=await req('/api/appointments?date=2026-11-02');assert.equal(r.status,200);assert.equal(r.data.length,3);
+ assert.deepEqual([...new Set(r.data.map(a=>a.barber_id))].sort(),['barber','owner']);
+ r=await req('/api/appointments?date=2026-11-02&barber=barber');assert.equal(r.status,200);assert.equal(r.data.length,2);assert.ok(r.data.every(a=>a.barber_id==='barber'));assert.ok(r.data.some(a=>a.kind==='block'));
+ assert.equal((await req('/api/appointments?date=invalid')).status,400);
+ assert.equal((await req('/api/appointments?date=2026-11-02&barber=missing')).data.length,0);
+ assert.equal((await req('/api/appointments?date=2026-11-02&barber=barber',undefined,'barber')).data.length,2);
+ assert.equal((await req('/api/appointments?barber=owner',undefined,'barber')).status,403);
+ assert.equal((await req('/api/appointments?barber=owner',undefined,'owner','professional:barber')).status,403);
+ r=await req('/api/appointments?date=2026-11-02',undefined,'client');assert.equal(r.data.length,2);assert.ok(r.data.every(a=>a.user_id==='client'));assert.ok(r.data.every(a=>a.phone===undefined));
+ await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});await req('/api/access',{id:'limited',permissions:{finance:false,contacts:false}});
+ r=await req('/api/appointments?date=2026-11-02',undefined,'limited');assert.equal(r.data.length,3);assert.ok(r.data.every(a=>a.phone===undefined&&a.price===null));
+});
+
+test('personal creator grants professional and paid community access, hides other profiles and revokes expired educators',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});await initClient('educator');await initClient('founder');await initClient();
+ for(const role of ['educator','founder']){db.prepare("INSERT INTO ledger(id,project,direction,amount,description,status,date,user_id,actor_id,created_at) VALUES(?,'eusou','income',19000,'Mensalidade','received',?,?,?,?)").run('payment-'+role,today(),role,'owner',Math.floor(Date.now()/1000));db.prepare('INSERT INTO eu_members(user_id,role,paid_until,ledger_id) VALUES(?,?,?,?)').run(role,role,Math.floor(Date.now()/1000)+86400,'payment-'+role)}
+ for(const [id,type,limit] of [['barber','barber',3],['educator','educator',5],['founder','founder',8]]){
+  const r=await req('/api/creator',undefined,id);assert.equal(r.status,200);assert.equal(r.data.access.type,type);assert.equal(r.data.access.dailyLimit,limit);assert.deepEqual(r.data.jobs,[]);assert.equal((await req('/api/me',undefined,id)).data.creatorAccess.type,type);
+  assert.equal((await req('/api/studio',undefined,id)).status,403);
+ }
+ assert.equal((await req('/api/creator',undefined,'client')).status,403);
+ assert.equal((await req('/api/creator',undefined,'owner','professional:barber')).status,403);
+ db.prepare("UPDATE eu_members SET paid_until=1 WHERE user_id='educator'").run();assert.equal((await req('/api/creator',undefined,'educator')).status,403);
+ assert.equal((await req('/api/me',undefined,'educator')).data.creatorAccess,null);
+ await req('/api/access',{id:'barber',permissions:{assistant:false}});assert.equal((await req('/api/creator',undefined,'barber')).status,403);
+});
+
+test('personal creator isolates drafts and identity, enforces both quotas and preserves official Studio',async()=>{
+ await req('/api/me');for(const id of ['barber','other']){await initClient(id);await req('/api/role',{id,role:'barber'})}
+ env.OPENAI_API_KEY='local-test-only';const real=globalThis.fetch,inputs=[];
+ globalThis.fetch=async(url,opts)=>{assert.equal(url,'https://api.openai.com/v1/responses');const payload=JSON.parse(opts.body);assert.equal(payload.store,false);inputs.push(JSON.parse(payload.input));const count=inputs.at(-1).format==='carousel'?5:1;return Response.json({output:[{content:[{type:'output_text',text:JSON.stringify({title:'Conteúdo profissional',caption:'Orientação educativa',slides:Array.from({length:count},()=>({title:'Cuidados',body:'Conteúdo para revisar.'}))})}]}]})};
+ try{
+  assert.equal((await req('/api/creator/profile',{name:'Minha marca',instagram:'@minhamarca'},'barber')).status,200);
+  const draft=(await req('/api/creator/generate',{format:'carousel',topic:'tecnica',brief:'Explique o degradê',userId:'other'},'barber'));
+  assert.equal(draft.status,201);assert.equal(draft.data.job.slides.length,5);assert.equal(inputs[0].professional,'Minha marca');assert.equal(inputs[0].instagram,'minhamarca');
+  assert.ok(!JSON.stringify(inputs[0]).includes('24999999999'));
+  assert.equal((await req('/api/creator',undefined,'other')).data.jobs.length,0);
+  assert.equal((await req('/api/creator/remove',{id:draft.data.job.id},'other')).status,404);
+  assert.equal((await req('/api/studio')).data.jobs.length,0);
+  for(let n=0;n<2;n++)assert.equal((await req('/api/creator/generate',{format:'reel',topic:'aulas',brief:'Ensine um corte'},'barber')).status,201);
+  assert.equal((await req('/api/creator/generate',{format:'post',topic:'aulas',brief:'Ensine um corte'},'barber')).status,429);assert.equal(inputs.length,3);
+  const limits={barber:0,educator:5,founder:8,member:3,owner:8};assert.equal((await req('/api/creator/limits',limits,'barber')).status,403);assert.equal((await req('/api/creator/limits',limits)).status,200);
+  assert.equal((await req('/api/creator/generate',{format:'post',topic:'aulas',brief:'Ensine um corte'},'other')).status,429);assert.equal(inputs.length,3);
+  assert.equal((await req('/api/creator/limits',{...limits,barber:3})).status,200);
+  const key=db.prepare("SELECT key FROM config WHERE key LIKE 'studio_usage_%'").get().key;db.prepare('UPDATE config SET value=? WHERE key=?').run('12',key);
+  assert.equal((await req('/api/creator/generate',{format:'post',topic:'aulas',brief:'Ensine um corte'},'other')).status,429);assert.equal(inputs.length,3);
+ }finally{globalThis.fetch=real}
 });

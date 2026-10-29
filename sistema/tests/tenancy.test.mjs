@@ -115,3 +115,25 @@ test('signed license payments activate only matching company, amount and invoice
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM invoices').get().n,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM memberships').get().n,0);
  }finally{globalThis.fetch=original}
 });
+
+
+test('owner profile selection stays inside its business namespace',async()=>{
+ await create('alice');await create('bruno');
+ const own=await request('/b/alice/api/me',undefined,'alice',{'X-Joao-Profile':'self'});
+ assert.equal(own.status,200);assert.equal(own.data.user.role,'barber');assert.equal(own.data.isOwner,false);
+ await profile('bruno','otherbarber');await request('/b/bruno/api/role',{id:'otherbarber',role:'barber'},'bruno');
+ assert.equal((await request('/b/alice/api/me',undefined,'alice',{'X-Joao-Profile':'professional:otherbarber'})).status,409);
+ assert.equal((await request('/b/alice/api/me',undefined,'owner',{'X-Joao-Profile':'self'})).status,403);
+ assert.equal((await request('/b/alice/api/me',undefined,'alice')).data.isOwner,true);
+});
+
+test('personal creator identity and budgets are isolated between businesses, without inheriting root AI',async()=>{
+ await create('alice');await create('bob');
+ const a='/b/alice/api/creator',b='/b/bob/api/creator';
+ assert.equal((await request(a+'/profile',{name:'Marca Alice',instagram:'alicecuts'},'alice')).status,200);
+ const limits={barber:1,educator:2,founder:3,member:1,owner:2};assert.equal((await request(a+'/limits',limits,'alice')).status,200);
+ env.OPENAI_API_KEY='root-local-test-only';
+ const own=(await request(a,undefined,'alice')).data,other=(await request(b,undefined,'bob')).data;
+ assert.equal(own.profile.name,'Marca Alice');assert.equal(other.profile.name,undefined);assert.equal(own.access.dailyLimit,2);assert.equal(other.access.dailyLimit,8);assert.equal(own.aiConfigured,false);assert.equal(other.aiConfigured,false);
+ assert.equal((await request(a,undefined,'bob')).status,403);assert.equal((await request('/api/creator',undefined,'alice')).status,403);
+});
