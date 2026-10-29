@@ -1,0 +1,12 @@
+# Retorno, reposição e Fox For Men — 28/10/2026
+
+- Regras iniciais editáveis: corte e combo 14 dias; barba, pezinho, hidratação e camuflagem 7; sobrancelha e limpeza de pele 15; depilação 30. Intervalos são sugestões comerciais com avaliação profissional, não prescrição.
+- Serviços concluídos e extras registrados geram datas; combos não duplicam corte/barba. Reserva futura correspondente suspende o convite. Cliente pode adiar o lembrete.
+- Compras online começam a contar reposição na retirada confirmada; venda manual exige vínculo com cliente para gerar lembrete. Estimativas ajustáveis: balm 45, óleo 60, anticaspa 60, 4 em 1 30, teia/premium/seco 30, Orange 45, tônico 30 dias. Quantidade comprada ajusta a previsão, sem prometer duração exata.
+- Convites consolidados, antecedência de 2 dias, intervalo mínimo de 7 dias por cliente, consentimento de marketing e vínculo WhatsApp; revalidação antes de enviar; pausa e atendimento humano respeitados; modelo Meta care_return fora da janela de 24h; processamento horário existente reutilizado. Nenhuma reserva ou compra automática.
+- Catálogo autorizado de 9 produtos com fotos reais incorporadas e fontes registradas. Imagem do shampoo 4 em 1 mostra lote e está identificada como tal; preço é unitário.
+- Preços iniciais de venda em R$: balm/óleo 39,90; anticaspa 44,90; 4 em 1 29,90; teia/premium/seco 24,90; Orange 29,90; tônico 59,90.
+- Pesquisa: loja oficial https://foxformen.com.br/categoria/atacado/ e https://www.ateliedosbarbeiros.com.br/ . Fontes por produto em fox-catalog.js; origem das fotos em fox-images.js. Premium/seco têm cotação média de kit misto, não custo individual confirmado. Cotação não inclui frete/tributos/taxas e não foi lançada como compra real.
+- Cadastro inicial idempotente somente no espaço raiz do proprietário já autorizado; empresas SaaS não recebem o catálogo automaticamente. Nenhum estoque, custo de aquisição ou pagamento fictício; custo real e estoque precisam ser informados antes da venda. Preços e regras existentes não são sobrescritos.
+- WhatsApp foi consultado em produção e retornou configured=false. Portanto, envio real e aprovação do novo modelo permanecem pendentes. Não houve disparo de marketing durante a implementação.
+- Verificação: testes de concorrência, isolamento, datas, consentimento/revogação, reservas futuras, adiamento, pausa, entrega confirmada, custo pendente, catálogo idempotente, envio oficial simulado e imagens locais. Fluxo de gestão e imagens conferidos na prévia.

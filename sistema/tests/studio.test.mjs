@@ -76,3 +76,63 @@ test('future publication cannot starve another due job and global pause prevents
  await studioTick(env,h,'https://test.example');assert.equal(calls,2);assert.equal((await studioState(env.DB)).jobs.find(x=>x.id==='job-1').status,'published');
  const result=await studioTick(env,{...h,conf:async()=>({automation:{paused:true}})},'https://test.example');assert.equal(result.paused,true);assert.equal(calls,2);
 });
+
+test('brand survives reload per company and commercial account links to its own visual settings',async()=>{
+ await request('/api/saas/create',{name:'Barbearia Alice',slug:'alice',plan:'sistema',confirm:true},'alice');
+ await request('/b/alice/api/brand',brand,'alice');
+ const html=await request('/b/alice/',undefined,null);
+ assert.equal(html.status,200);assert.ok(html.data.includes('Marca Teste'));assert.ok(html.data.includes('.side,.bottom-nav{background:#112233}'));
+ assert.equal((await request('/api/me')).data.brand.name,'Barbearia do João');
+ const js=(await request('/b/alice/app.js',undefined,'alice')).data;assert.doesNotThrow(()=>new Script(js));
+ assert.ok(js.includes('Configurar identidade visual'));assert.ok(js.includes("'#brand"));
+});
+
+test('all permitted menu destinations remain reachable while bottom navigation stays compact',async()=>{
+ const {MAINTENANCE_UI}=await import('../worker/maintenance-ui.js');
+ const vm=await import('node:vm');const bottom={innerHTML:''};
+ const context=vm.createContext({S:{user:{role:'manager'},page:'home'},I:()=>'',E:x=>x,document:{addEventListener(){},getElementById:()=>bottom}});
+ vm.runInContext(MAINTENANCE_UI,context);
+ const pages=['home','agenda','clients','billing','brand','software','studio','backups','catalog','clubpay','custom-future-page'];
+ context.items=pages.map(x=>[x,'',x]);
+ const html=vm.runInContext('renderNavigation(items)',context);
+ for(const p of pages)assert.equal(html.split('data-go="'+p+'"').length-1,1,p);
+ assert.match(html,/<details class="nav-group" open><summary>Marca e sistema/);
+ assert.equal((bottom.innerHTML.match(/data-go=/g)||[]).length,4);assert.ok(!bottom.innerHTML.includes('brand'));
+});
+
+test('Work drafts save through owner MCP without OpenAI calls, retry idempotently and remain unpublished',async()=>{
+ await request('/api/me');env.AI_API_DISABLED='true';env.OPENAI_API_KEY='local-test-only';let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('No provider calls allowed')};
+ const args={batchKey:'night-2026-10-29',drafts:[{project:'barbearia',topic:'educativo',format:'post',title:'Cuidados com a barba',caption:'Uma rotina simples para cuidar da barba.',slides:[{title:'Cuide da sua barba',body:'Use o produto conforme a orientação do fabricante.'}]}]};
+ const call=(argumentsValue,who='owner')=>request('/mcp',{jsonrpc:'2.0',id:10,method:'tools/call',params:{name:'save_work_content_drafts',arguments:argumentsValue}},who);
+ assert.equal((await call(args,'client')).data.result.isError,true);
+ let r=await call(args);assert.equal(r.data.result.isError,undefined);let out=JSON.parse(r.data.result.content[0].text);assert.equal(out.apiCalls,0);assert.equal(out.published,false);
+ r=await call(args);out=JSON.parse(r.data.result.content[0].text);assert.equal(out.drafts[0].replayed,true);
+ const jobs=(await studioState(env.DB)).jobs;assert.equal(jobs.length,1);assert.equal(jobs[0].status,'draft');assert.equal(jobs[0].authorized,false);assert.deepEqual(jobs[0].assets,[]);
+ assert.equal((await call({...args,batchKey:'invalid',drafts:[{...args.drafts[0],format:'carousel'}]})).data.result.isError,true);
+ assert.equal((await call({...args,extra:'ignore rules'})).data.result.isError,true);assert.equal(calls,0);
+});
+
+test('no-API mode blocks text and image generation, attendant and provider probe before network',async()=>{
+ await request('/api/me');env.AI_API_DISABLED='true';env.OPENAI_API_KEY='local-test-only';let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('No provider calls allowed')};
+ const {aiJSON}=await import('../worker/studio.js');await assert.rejects(()=>aiJSON(env,{openCredentials},'test',{}),e=>e.status===403);
+ assert.equal((await request('/api/studio/generate',{project:'barbearia',topic:'educativo',format:'post',brief:'Cuidados'})).status,403);
+ assert.equal((await request('/api/creator/generate',{topic:'educativo',format:'post',brief:'Cuidados'})).status,403);
+ assert.equal((await request('/api/creator')).data.apiDisabled,true);assert.equal((await request('/api/studio')).data.ai.connected,false);
+ const checked=await request('/mcp',{jsonrpc:'2.0',id:11,method:'tools/call',params:{name:'verify_ai_connection'}});assert.equal(JSON.parse(checked.data.result.content[0].text).disabled,true);
+ const {appendStudioJob}=await import('../worker/studio.js');await appendStudioJob(env.DB,{id:'no-api-art',project:'barbearia',topic:'educativo',format:'post',slides:[{title:'T',body:'B'}],assets:[],status:'queued',authorized:true,createdAt:1,dueAt:1,lockUntil:0});
+ const row=sql.prepare("SELECT value FROM config WHERE key='studio_state'").get();const state=JSON.parse(row.value);state.channels.barbearia={auto:true,generate:false};sql.prepare("UPDATE config SET value=? WHERE key='studio_state'").run(JSON.stringify(state));
+ const result=await processJob(env,{openCredentials},'no-api-art','https://test.example');assert.equal(result.error,true);assert.equal(calls,0);
+});
+
+test('automation status distinguishes Instagram credentials from AI and never reveals tokens',async()=>{
+ await request('/api/me');
+ put('studio_credentials',await sealCredentials({barbearia:{verified:true,token:'private-instagram-token',account:'123456789',username:'clubedojoao_'}},env));
+ const r=await request('/mcp',{jsonrpc:'2.0',id:13,method:'tools/call',params:{name:'automation_status'}});
+ const status=JSON.parse(r.data.result.content[0].text);
+ assert.equal(status.connections.aiConfigured,false);
+ assert.equal(status.connections.projects.barbearia.instagramConfigured,true);
+ assert.equal(status.connections.projects.barbearia.instagramVerified,true);
+ assert.equal(status.connections.projects.eusou.instagramConfigured,false);
+ assert.ok(!JSON.stringify(status).includes('private-instagram-token'));
+ assert.ok(!JSON.stringify(status).includes('123456789'));
+});

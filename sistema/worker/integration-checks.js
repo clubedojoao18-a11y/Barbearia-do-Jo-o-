@@ -3,6 +3,9 @@ export async function verifyIntegrations(env,c,h){
  const report={checkedAt:h.now(),scope:env.WORKSPACE?'company':'root',ai:null,stripe:null,whatsapp:null};
  const check=async fn=>{try{return await fn()}catch(e){return {verified:false,error:e.status?e.message:'Provedor indisponível. Tente novamente mais tarde.'}}};
  report.ai=await check(()=>h.verifyAIConnection(env));
+ // A model lookup can succeed even when generation is blocked by billing.
+ report.ai.generationTest=JSON.parse((await env.DB.prepare("SELECT value FROM config WHERE key='studio_attendant_health'").first())?.value||'null');
+ report.ai.note='Acesso ao modelo não comprova geração. generationTest registra o último teste de atendimento, sem executar nova geração.';
  report.stripe=await check(async()=>{
   if(!env.STRIPE_SECRET_KEY)return {configured:false,verified:false};
   const account=await h.stripe(env,'account',null,'GET');
