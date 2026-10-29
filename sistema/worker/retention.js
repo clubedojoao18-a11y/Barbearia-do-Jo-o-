@@ -4,7 +4,7 @@ const all=async(db,q,...v)=>(await db.prepare(q).bind(...v).all()).results;
 const time=()=>Math.floor(Date.now()/1000),day=t=>new Date(t*1000-10800000).toISOString().slice(0,10);
 const plus=(date,n)=>new Date(Date.parse(date+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
-export const RETURN_RULES={corte:{name:'Corte',days:14},barba:{name:'Barba',days:7},combo:{name:'Corte e barba',days:14},sobrancelha:{name:'Sobrancelha',days:15},pezinho:{name:'Pezinho',days:7},hidratacao:{name:'Hidratação de cabelo e/ou barba',days:7},depilacao:{name:'Depilação de nariz e/ou orelha',days:30},camuflagem:{name:'Camuflagem',days:7},pele:{name:'Limpeza de pele',days:15}};
+export const RETURN_RULES={corte:{name:'Corte',days:14},barba:{name:'Barba',days:7},combo:{name:'Corte e barba',days:14},sobrancelha:{name:'Sobrancelha',days:15},pezinho:{name:'Pezinho',days:7},hidratacao:{name:'Hidratação de cabelo e/ou barba',days:15},depilacao:{name:'Depilação de nariz e/ou orelha',days:30},camuflagem:{name:'Camuflagem',days:7},pele:{name:'Limpeza de pele',days:15}};
 const alias=id=>id.startsWith('hidratacao-')?'hidratacao':id.startsWith('depilacao-')?'depilacao':id.startsWith('camuflagem-')?'camuflagem':id;
 const keys=id=>id==='combo'?['corte','barba']:alias(id)==='hidratacao'?['hidratacao']:alias(id)==='depilacao'?['depilacao']:[alias(id)];
 export async function returnSettings(db){return {enabled:false,leadDays:2,cooldownDays:7,perRun:10,rules:RETURN_RULES,...await get(db,'retention_settings',{})}}
