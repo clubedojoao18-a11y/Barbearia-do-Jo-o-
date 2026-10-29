@@ -330,6 +330,24 @@ async function waSend(text,id=crypto.randomUUID(),from='5524999999999'){
 }
 function mockMeta(){const original=globalThis.fetch;let sent=[];globalThis.fetch=async(url,opts)=>{if(url.includes('graph.facebook.com')){sent.push(JSON.parse(opts.body));return Response.json({messages:[{id:'wamid_mock_'+sent.length}]})}return original(url,opts)};return {sent,restore:()=>globalThis.fetch=original}}
 async function linkWa(){await req('/api/me');await initClient();await waSetup();const code=(await req('/api/whatsapp/link',{},'client')).data.command;assert.equal((await waSend(code)).status,200)}
+
+test('WhatsApp revalidates weekly hours after a draft and shares confirmed bookings with the app',async()=>{
+ const mock=mockMeta();try{
+  await linkWa();const day=new Date(nextDate()+'T12:00:00Z').getUTCDay();
+  const weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[]]));weekly[day]=[{open:'16:00',close:'20:00'}];
+  assert.equal((await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly})).status,200);
+  await waSend('AGENDAR '+nextDate());
+  const pending=JSON.parse(db.prepare("SELECT pending FROM wa_contacts WHERE user_id='client'").get().pending);
+  assert.ok(pending.choices.length>0);assert.ok(pending.choices.every(x=>x.time>='16:00'&&x.time<='19:15'));
+  await waSend('1 AVULSO');assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);
+  weekly[day]=[];await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly});
+  await waSend('CONFIRMAR');assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);
+  weekly[day]=[{open:'16:00',close:'20:00'}];await req('/api/professional-hours',{barber:'owner',weeklyPeriods:weekly});
+  await waSend('AGENDAR '+nextDate());await waSend('1 AVULSO');await waSend('CONFIRMAR');
+  const appointment=db.prepare("SELECT * FROM appointments WHERE status='scheduled'").get();assert.ok(appointment);assert.equal(appointment.time,'16:00');assert.equal(appointment.duration,45);
+  assert.equal((await req('/api/appointments',{...booking(),service:'corte',time:'16:00'},'client')).status,409);
+ }finally{mock.restore()}
+});
 test('natural-language booking shares slots and requires explicit confirmation; model receives no customer identity',async()=>{
  const mock=mockMeta();try{await linkWa();env.OPENAI_API_KEY='local-test-only';let aiCalls=0;const meta=globalThis.fetch;
  globalThis.fetch=async(url,opts)=>{if(String(url).includes('api.openai.com')){aiCalls++;const payload=JSON.parse(opts.body);assert.equal(payload.store,false);assert.ok(!payload.input.includes('client@example.com'));assert.ok(!payload.input.includes('24999999999'));return Response.json({output:[{content:[{type:'output_text',text:JSON.stringify({intent:'book',date:nextDate(),service:'corte',index:null,kind:'single'})}]}]})}return meta(url,opts)};

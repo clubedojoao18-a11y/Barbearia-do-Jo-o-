@@ -28,7 +28,11 @@ Todos os serviços externos são NOT_VERIFIED na inspeção local. O comando nã
 
 ## Validação
 
-186 testes aprovados, sem falhas/ignorados. Novos casos verificam dias distintos, intervalos, limite geral, dias fechados, validação sem gravação parcial, permissão, preservação de reservas e padrão de hidratação sem substituir configuração explícita. Testes usam SQLite em memória, APIs simuladas e FFmpeg real com vídeo sintético. Build, artefato ESM, migrações e diff devem ser conferidos antes do envio da branch. QA visual não realizado nesta revisão.
+189 testes aprovados, sem falhas/ignorados, após incorporar as mudanças remotas de consolidação v36 sem sobrescrevê-las. Novos casos verificam dias distintos, intervalos, limite geral, dias fechados, validação sem gravação parcial, permissão, preservação de reservas e padrão de hidratação sem substituir configuração explícita. Testes adicionais confirmam que fechar o expediente após preparar um rascunho WhatsApp impede a reserva, que reabri-lo permite confirmação e bloqueia conflito no app, e que o expediente semanal de uma empresa não muda a agenda de outra. Testes usam SQLite em memória, APIs simuladas e FFmpeg real com vídeo sintético. Build, artefato ESM, quatro migrações e diff passaram no conjunto reconciliado.
+
+## Limite da revisão visual
+
+Ferramentas de navegador/computador, cua_repl.js e sites-preview não estão disponíveis neste ambiente. Não foi aberto navegador comum ou na nuvem, não foram instaladas ferramentas substitutas e não foram produzidas capturas. Compilação do JavaScript e testes de fluxo não equivalem a conferir a tela no celular. QA visual permanece pendente. Nenhum dado pessoal informado no chat foi inserido no código, nos testes ou na documentação.
 
 ## Tarefas técnicas e teste
 

@@ -46,6 +46,18 @@ test('vendor identity and spoofed headers do not grant owner privileges inside a
  assert.equal((await request('/b/alice/api/manage',undefined,'bruno')).status,403);
  assert.equal((await request('/api/saas/company',{id:state().companies[0].id,paused:true},'alice')).status,403);
 });
+
+test('weekly hours stay isolated between companies and cannot be changed by a foreign owner',async()=>{
+ await create('alice');await create('bruno');await request('/b/alice/api/me',undefined,'alice');await request('/b/bruno/api/me',undefined,'bruno');await profile('alice','customer');await profile('bruno','customer');
+ const weekday=new Date(date()+'T12:00:00Z').getUTCDay(),weekly=Object.fromEntries(Array.from({length:7},(_,day)=>[day,[]]));weekly[weekday]=[{open:'16:00',close:'20:00'}];
+ assert.equal((await request('/b/alice/api/professional-hours',{barber:'alice',weeklyPeriods:weekly},'alice')).status,200);
+ assert.equal((await request('/b/alice/api/professional-hours',{barber:'alice',weeklyPeriods:weekly},'bruno')).status,403);
+ assert.equal((await request('/b/alice/api/appointments',book('alice'),'customer')).status,400);
+ assert.equal((await request('/b/alice/api/appointments',book('alice',{time:'16:00'}),'customer')).status,201);
+ assert.equal((await request('/b/bruno/api/appointments',book('bruno'),'customer')).status,201);
+ assert.deepEqual((await request('/b/bruno/api/professional-hours',undefined,'bruno')).data,{});
+ const alice=(await request('/b/alice/api/professional-hours',undefined,'alice')).data;assert.deepEqual(alice.alice.weeklyPeriods[weekday],[{open:'16:00',close:'20:00'}]);
+});
 test('company runtime cannot inherit vendor payment or WhatsApp credentials',async()=>{
  await create('alice');env.STRIPE_SECRET_KEY='vendor-secret';env.STRIPE_WEBHOOK_SECRET='vendor-webhook';env.PAYMENTS_ENABLED='true';env.WHATSAPP_ACCESS_TOKEN='vendor-whatsapp';env.AUTOMATION_JOB_TOKEN='vendor-job';
  const company=state().companies[0],child=companyEnvironment(env,company);assert.equal(child.STRIPE_SECRET_KEY,undefined);assert.equal(child.WHATSAPP_ACCESS_TOKEN,undefined);assert.equal(child.AUTOMATION_JOB_TOKEN,undefined);
