@@ -34,7 +34,7 @@ test('actual costs must be confirmed before sale; owner can set price and replen
 });
 test('completed principal and extras create distinct return dates, combos cover cut and beard, canceled visits do not count',async()=>{
  await init();visit('done-combo','combo',-1,'done','client',['hidratacao','depilacao','pele','camuflagem']);visit('canceled','corte',0,'canceled');visit('other-visit','hidratacao',-1,'done','other');
- const r=await customerReturns(env.DB,'client',await returnSettings(env.DB)),by=Object.fromEntries(r.map(x=>[x.key,x]));assert.equal(r.length,5);assert.equal(by['service:corte'].due,date(13));assert.equal(by['service:corte'].bookingService,'combo');assert.equal(by['service:barba'],undefined);assert.equal(by['service:hidratacao'].due,date(6));assert.equal(by['service:depilacao'].due,date(29));assert.equal(by['service:pele'].due,date(14));assert.equal(by['service:camuflagem'].due,date(6));
+ const r=await customerReturns(env.DB,'client',await returnSettings(env.DB)),by=Object.fromEntries(r.map(x=>[x.key,x]));assert.equal(r.length,5);assert.equal(by['service:corte'].due,date(13));assert.equal(by['service:corte'].bookingService,'combo');assert.equal(by['service:barba'],undefined);assert.equal(by['service:hidratacao'].due,date(14));assert.equal(by['service:depilacao'].due,date(29));assert.equal(by['service:pele'].due,date(14));assert.equal(by['service:camuflagem'].due,date(6));
  visit('new-cut','corte',0);assert.equal((await customerReturns(env.DB,'client',await returnSettings(env.DB))).find(x=>x.key==='service:corte').source,'new-cut');
 });
 test('future matching extras suppress the specific invitation, but unrelated appointments do not suppress replenishment',async()=>{
@@ -67,7 +67,7 @@ test('verified catalog images are served locally; unknown identifiers never fetc
 
 function setupMeta(){env.WHATSAPP_ACCESS_TOKEN='meta-test-token';env.WHATSAPP_PHONE_NUMBER_ID='1234567890';env.WHATSAPP_APP_SECRET='secret-for-tests';env.WHATSAPP_VERIFY_TOKEN='verify-for-tests';put('whatsapp',config.whatsapp)}
 test('official send uses approved template outside 24h, resumes only unsent template-blocked messages and never double sends',async()=>{
- await enable();visit('due','hidratacao',-7);setupMeta();db.prepare('UPDATE wa_contacts SET last_inbound=?').run(now()-90000);put('whatsapp',{enabled:true,templates:{}});let sends=0;
+ await enable();visit('due','hidratacao',-15);setupMeta();db.prepare('UPDATE wa_contacts SET last_inbound=?').run(now()-90000);put('whatsapp',{enabled:true,templates:{}});let sends=0;
  globalThis.fetch=async(url,options)=>{assert.match(url,/graph.facebook.com/);const payload=JSON.parse(options.body);assert.equal(payload.type,'template');assert.equal(payload.template.name,'return_approved');assert.match(payload.template.components[0].parameters[0].text,/AGENDAR \d{4}-\d{2}-\d{2} hidratacao/);sends++;return Response.json({messages:[{id:'wamid_return_'+sends}]})};
  assert.equal((await req('/api/whatsapp/admin/process',{})).status,200);assert.equal(sends,0);assert.equal(db.prepare('SELECT status FROM wa_outbox').get().status,'blocked');
  put('whatsapp',config.whatsapp);assert.equal((await req('/api/whatsapp/admin/process',{})).status,200);assert.equal(sends,1);assert.equal(db.prepare('SELECT status FROM wa_outbox').get().status,'sent');
@@ -89,4 +89,11 @@ test('catalog onboarding is owner-only, requires explicit confirmation and repla
  await init();assert.equal((await req('/api/retention/catalog/import',{confirm:true},'client')).status,403);assert.equal((await req('/api/retention/catalog/import',{confirm:false})).status,400);
  const r=await worker.fetch(new Request('https://test.example/mcp',{method:'POST',headers:{'Content-Type':'application/json','oai-authenticated-user-id':'owner','oai-authenticated-user-email':'clubedojoao18@gmail.com'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'process_automations',arguments:{}}})}),env);const data=await r.json();assert.equal(r.status,200);assert.equal(data.result.isError,undefined);assert.equal(db.prepare('SELECT COUNT(*) n FROM products').get().n,9);assert.equal(db.prepare('SELECT COUNT(*) n FROM ledger').get().n,0);
  assert.equal((await req('/api/retention/catalog/import',{confirm:true})).data.replayed,true);
+});
+
+ test('hydration defaults to fifteen days while explicit saved intervals remain unchanged',async()=>{
+ await init();const defaults=await returnSettings(env.DB);assert.equal(defaults.rules.hidratacao.days,15);visit('hydration','hidratacao',-1);
+ assert.equal((await customerReturns(env.DB,'client',defaults))[0].due,date(14));
+ put('retention_settings',{rules:{...defaults.rules,hidratacao:{name:'Hidratação',days:21}}});
+ const saved=await returnSettings(env.DB);assert.equal(saved.rules.hidratacao.days,21);assert.equal((await customerReturns(env.DB,'client',saved))[0].due,date(20));
 });
