@@ -123,3 +123,16 @@ test('no-API mode blocks text and image generation, attendant and provider probe
  const row=sql.prepare("SELECT value FROM config WHERE key='studio_state'").get();const state=JSON.parse(row.value);state.channels.barbearia={auto:true,generate:false};sql.prepare("UPDATE config SET value=? WHERE key='studio_state'").run(JSON.stringify(state));
  const result=await processJob(env,{openCredentials},'no-api-art','https://test.example');assert.equal(result.error,true);assert.equal(calls,0);
 });
+
+test('automation status distinguishes Instagram credentials from AI and never reveals tokens',async()=>{
+ await request('/api/me');
+ put('studio_credentials',await sealCredentials({barbearia:{verified:true,token:'private-instagram-token',account:'123456789',username:'clubedojoao_'}},env));
+ const r=await request('/mcp',{jsonrpc:'2.0',id:13,method:'tools/call',params:{name:'automation_status'}});
+ const status=JSON.parse(r.data.result.content[0].text);
+ assert.equal(status.connections.aiConfigured,false);
+ assert.equal(status.connections.projects.barbearia.instagramConfigured,true);
+ assert.equal(status.connections.projects.barbearia.instagramVerified,true);
+ assert.equal(status.connections.projects.eusou.instagramConfigured,false);
+ assert.ok(!JSON.stringify(status).includes('private-instagram-token'));
+ assert.ok(!JSON.stringify(status).includes('123456789'));
+});

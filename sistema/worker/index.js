@@ -25,7 +25,7 @@ import {retailRoutes,retailWebhook,addonSelection,withAddonDetails} from './reta
 import {CLIENT_UI} from './client-ui.js';
 import {RETAIL_UI} from './retail-ui.js';
 import {careRoutes,CARE_UI} from './care.js';
-import {studioRoutes,studioMedia,studioTick,studioState,PROJECTS,brandFor,brandCSS,FEATURES} from './studio.js';
+import {studioRoutes,studioMedia,studioTick,studioState,studioCredentials,PROJECTS,brandFor,brandCSS,FEATURES} from './studio.js';
 import {STUDIO_UI} from './studio-ui.js';
 import {reserveDeliveryAttempt} from './delivery-budget.js';
 import {professionalWindow,withinProfessionalWindow,occupiedTimes,reservationMinutes} from './agenda-rules.js';
@@ -519,6 +519,6 @@ async function siteMCP(req,env,url){
  return response({content:[{type:'text',text:JSON.stringify({ok:true,outcomes})}]});
  }catch(e){return response({isError:true,content:[{type:'text',text:e.status?e.message:'A rotina encontrou uma falha. Confira a central do sistema.'}]})}
 }
-async function studioConnectionsSummary(env){const s=await studioState(env.DB);return {apiDisabled:env.AI_API_DISABLED==='true',projects:Object.fromEntries(PROJECTS.map(p=>[p,{auto:s.channels[p].auto}])),aiConfigured:!!env.OPENAI_API_KEY||!!await first(env.DB,"SELECT key FROM config WHERE key='studio_credentials'"),aiHealth:await first(env.DB,"SELECT value FROM config WHERE key='studio_ai_health'"),aiGenerationHealth:await first(env.DB,"SELECT value FROM config WHERE key='studio_attendant_health'"),backupStorage:!!env.BUCKET,lastBackup:await first(env.DB,"SELECT value FROM config WHERE key='backup_last'"),lastCloudRun:await first(env.DB,"SELECT value FROM config WHERE key='studio_last_cloud_run'")}}
+async function studioConnectionsSummary(env){const s=await studioState(env.DB),k=await studioCredentials(env,{openCredentials});return {apiDisabled:env.AI_API_DISABLED==='true',projects:Object.fromEntries(PROJECTS.map(p=>[p,{auto:s.channels[p].auto,instagramConfigured:!!(k[p]?.token&&k[p]?.account),instagramVerified:!!k[p]?.verified,username:k[p]?.username||''}])),aiConfigured:!!(env.OPENAI_API_KEY||k.openai),aiHealth:await first(env.DB,"SELECT value FROM config WHERE key='studio_ai_health'"),aiGenerationHealth:await first(env.DB,"SELECT value FROM config WHERE key='studio_attendant_health'"),backupStorage:!!env.BUCKET,lastBackup:await first(env.DB,"SELECT value FROM config WHERE key='backup_last'"),lastCloudRun:await first(env.DB,"SELECT value FROM config WHERE key='studio_last_cloud_run'")}}
 
 async function verifyAIConnection(env){const row=await first(env.DB,"SELECT value FROM config WHERE key='studio_credentials'"),credentials=row?await openCredentials(JSON.parse(row.value),env):{};const key=credentials.openai||env.OPENAI_API_KEY;if(env.AI_API_DISABLED==='true')return {configured:!!key,verified:false,disabled:true};if(!key)return {configured:false,verified:false};try{const r=await fetch('https://api.openai.com/v1/models/gpt-4.1-mini',{headers:{Authorization:'Bearer '+key},signal:AbortSignal.timeout(20000)});const result={configured:true,verified:r.ok,status:r.status,checkedAt:now()};await run(env.DB,"INSERT INTO config(key,value) VALUES('studio_ai_health',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",JSON.stringify(result));return result}catch{return {configured:true,verified:false,reason:'Não foi possível alcançar a OpenAI.'}}}
