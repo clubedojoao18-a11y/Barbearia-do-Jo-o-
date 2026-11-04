@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUT = ROOT / "conteudo-organico" / "calendario-2026-11.json"
+INPUT_DIR = ROOT / "conteudo-organico"
 OUTPUT = ROOT / "assets" / "conteudo-organico"
 BRANCH = os.environ.get("GITHUB_REF_NAME", "feat-rotina-organica-gratis-2026-11-04")
 REPO = os.environ.get("GITHUB_REPOSITORY", "clubedojoao18-a11y/Barbearia-do-Jo-o-")
@@ -67,11 +67,15 @@ def render(item: dict, file: Path) -> None:
     im.save(file, "JPEG", quality=88, optimize=True, progressive=True)
 
 def main() -> None:
-    document = json.loads(INPUT.read_text(encoding="utf-8"))
+    sources = sorted(INPUT_DIR.glob("calendario-????-??.json"))[-3:]
+    if not sources:
+        raise ValueError("No editorial calendars found")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     seen = set()
     enriched = []
-    for post in document["items"]:
+    for source in sources:
+      document = json.loads(source.read_text(encoding="utf-8"))
+      for post in document["items"]:
         ident = post["id"]
         if ident in seen or not ident.replace("-", "").isalnum() or len(ident) > 70:
             raise ValueError("Duplicate or unsafe post ID")
@@ -81,7 +85,7 @@ def main() -> None:
         file = OUTPUT / (ident + ".jpg")
         render(post, file)
         enriched.append({**post, "mediaUrl": "https://raw.githubusercontent.com/" + REPO + "/" + BRANCH + "/sistema/assets/conteudo-organico/" + file.name})
-    (OUTPUT / "manifest.json").write_text(json.dumps({"timezone": document["timezone"], "items": enriched}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (OUTPUT / "manifest.json").write_text(json.dumps({"timezone": "America/Sao_Paulo", "items": enriched}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print("Rendered", len(enriched), "original cards without API calls")
 
 if __name__ == "__main__":
