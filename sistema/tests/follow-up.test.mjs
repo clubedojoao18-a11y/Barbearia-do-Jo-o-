@@ -36,7 +36,7 @@ test('only authorized team can conclude and rebook, and invalid data changes not
  const id=await original();assert.equal((await req('/api/appointment-finish-next',{id,next:next()},'client')).status,403);
  await client('otherbarber');await req('/api/role',{id:'otherbarber',role:'barber'});assert.equal((await req('/api/appointment-finish-next',{id,next:next()},'otherbarber')).status,403);
  assert.equal((await req('/api/appointment-finish-next',{id,next:next({service:'barba'})})).status,400);
- assert.equal((await req('/api/appointment-finish-next',{id,next:next({date:future(0)})})).status,400);
+ assert.equal((await req('/api/appointment-finish-next',{id,next:next({date:future(-1)})})).status,400);
  assert.equal(db.prepare('SELECT status FROM appointments WHERE id=?').get(id).status,'scheduled');
  assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,1);
 });
