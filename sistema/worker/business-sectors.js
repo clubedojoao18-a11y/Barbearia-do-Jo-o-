@@ -24,7 +24,7 @@ export function businessCapabilities(company){
  const business=normalizeBusiness(company.business||{}),def=BUSINESS_SECTORS.find(x=>x.id===business.sector);
  return {...business,modules:[...def.modules],upcoming:[...def.upcoming],pilot:true,multiUnit:false};
 }
-const agenda=['appointments','appointment-status','appointment-confirm','appointment-reschedule','appointment-receipt','agenda-block','slots','professional-hours','agenda-vacation','catalog','booking-rules','waitlist','analytics','goals','assistant-prepare'];
+const agenda=['appointments','appointment-status','appointment-finish-next','appointment-confirm','appointment-reschedule','appointment-receipt','agenda-block','slots','professional-hours','agenda-vacation','catalog','booking-rules','waitlist','analytics','goals','assistant-prepare'];
 const legacy=['membership','checkout','portal','invoices','club-commissions','commissions','community-billing','academy','eusou','growth','retention','care','dependents','pricing','business-health','whatsapp'];
 export function sectorAllowsAPI(company,path){
  const caps=businessCapabilities(company);if(caps.sector==='barbearia')return true;
