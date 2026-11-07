@@ -2,6 +2,7 @@ import {aiJSON} from './studio.js';
 
 const schema={type:'object',additionalProperties:false,properties:{intent:{type:'string',enum:['book','reschedule','cancel','list','plan','human','select','help']},date:{type:['string','null']},service:{type:['string','null']},index:{type:['integer','null']},kind:{type:['string','null'],enum:['club','single',null]}},required:['intent','date','service','index','kind']};
 export async function attendantConfigured(env,h){
+ if(env.AI_API_DISABLED==='true')return false;
  if(env.OPENAI_API_KEY)return true;
  const row=await env.DB.prepare("SELECT value FROM config WHERE key='studio_credentials'").first();
  return !!(row&&(await h.openCredentials(JSON.parse(row.value),env)).openai);
