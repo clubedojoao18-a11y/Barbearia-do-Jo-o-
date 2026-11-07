@@ -22,7 +22,8 @@ test('relatório de prontidão declara integrações externas não verificadas',
   assert.match(report.scope,/not a production audit/i);
   assert.ok(report.files.every(f=>f.present));
   assert.ok(report.integrations.length>=5);
-  assert.ok(report.integrations.every(x=>x.status!=='VERIFIED'));
+  assert.ok(report.integrations.every(x=>x.status==='NOT_VERIFIED'));
+  assert.equal(report.verificationMode,'local-files-only');
   assert.ok(report.integrations.some(x=>x.name==='Stripe'));
   assert.ok(report.integrations.some(x=>x.name==='WhatsApp Meta'));
 });

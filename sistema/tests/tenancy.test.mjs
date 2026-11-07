@@ -14,6 +14,27 @@ function update(fn){const value=state();fn(value);sql.prepare("UPDATE config SET
 async function profile(slug,id){return request('/b/'+slug+'/api/profile',{name:'Cliente '+id,phone:'21980000001'},id)}
 const date=()=>new Date(Date.now()+2*86400000).toISOString().slice(0,10);
 const book=(barber,extra={})=>({service:'corte',kind:'single',date:date(),time:'10:00',barber,...extra});
+test('retail onboarding isolates a common core, hides haircut services and enforces module access on the server',async()=>{
+ const created=await request('/api/saas/create',{name:'Loja Alice',slug:'loja-alice',plan:'sistema',sector:'varejo',size:'pequena',modules:['agenda'],confirm:true},'alice');
+ assert.equal(created.status,201);assert.equal(created.data.company.business.sector,'varejo');assert.equal(created.data.company.business.multiUnit,false);
+ assert.ok(!created.data.company.business.modules.includes('agenda'));
+ const me=await request('/b/loja-alice/api/me',undefined,'alice');assert.equal(me.status,200);assert.deepEqual(me.data.services,[]);
+ assert.equal((await request('/b/loja-alice/api/appointments',undefined,'alice')).status,403);
+ assert.equal((await request('/b/loja-alice/api/appointments',book('alice'),'alice')).status,403);
+ assert.equal((await request('/b/loja-alice/api/eusou',undefined,'alice')).status,403);
+ assert.equal((await request('/b/loja-alice/api/products',{name:'Produto real',price:2000,cost:1000,minimum:1},'alice')).status,200);
+ assert.equal((await request('/b/loja-alice/api/operations',undefined,'alice')).data.products.length,1);
+ assert.equal((await request('/b/loja-alice/api/operations',undefined,'bruno')).status,403);
+ assert.equal((await request('/api/operations')).data.products.length,0);
+});
+test('new sectors validate labels, preserve legacy companies and expose specialist limits',async()=>{
+ assert.equal((await request('/api/saas/create',{name:'Teste',slug:'teste',plan:'sistema',sector:'inventado',confirm:true},'alice')).status,400);
+ assert.equal((await request('/api/saas/create',{name:'Teste',slug:'teste',plan:'sistema',sector:'outro',confirm:true},'alice')).status,400);
+ const other=await request('/api/saas/create',{name:'Oficina Alice',slug:'oficina',plan:'sistema',sector:'outro',sectorLabel:'Manutenção de bicicletas',size:'media',confirm:true},'alice');assert.equal(other.status,201);assert.equal(other.data.company.business.label,'Manutenção de bicicletas');
+ const hotel=await request('/api/saas/create',{name:'Hotel Bruno',slug:'hotel',plan:'sistema',sector:'hospedagem',size:'grande',confirm:true},'bruno');assert.equal(hotel.status,201);assert.match(hotel.data.company.business.upcoming.join(' '),/reservas/);assert.equal(hotel.data.company.business.multiUnit,false);
+ await create('carla');assert.equal((await request('/b/carla/api/appointments',undefined,'carla')).status,200);
+ const offer=await request('/api/saas/public');assert.ok(offer.data.sectors.some(x=>x.id==='outro'));assert.equal(offer.data.settings.billingEnabled,false);
+});
 test('new company provisioning is additive, idempotent and does not change existing customer records',async()=>{
  await request('/api/profile',{name:'Original owner',phone:'21980000000'});const before=sql.prepare('SELECT * FROM users WHERE id=?').get('owner');const x=await create('alice');
  assert.deepEqual(sql.prepare('SELECT * FROM users WHERE id=?').get('owner'),before);
@@ -114,4 +135,26 @@ test('signed license payments activate only matching company, amount and invoice
   assert.equal((await event({id:'evt_late_failure',type:'invoice.payment_failed',data:{object:invoice}})).status,200);assert.equal(state().companies[0].status,'active');
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM invoices').get().n,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM memberships').get().n,0);
  }finally{globalThis.fetch=original}
+});
+
+
+test('owner profile selection stays inside its business namespace',async()=>{
+ await create('alice');await create('bruno');
+ const own=await request('/b/alice/api/me',undefined,'alice',{'X-Joao-Profile':'self'});
+ assert.equal(own.status,200);assert.equal(own.data.user.role,'barber');assert.equal(own.data.isOwner,false);
+ await profile('bruno','otherbarber');await request('/b/bruno/api/role',{id:'otherbarber',role:'barber'},'bruno');
+ assert.equal((await request('/b/alice/api/me',undefined,'alice',{'X-Joao-Profile':'professional:otherbarber'})).status,409);
+ assert.equal((await request('/b/alice/api/me',undefined,'owner',{'X-Joao-Profile':'self'})).status,403);
+ assert.equal((await request('/b/alice/api/me',undefined,'alice')).data.isOwner,true);
+});
+
+test('personal creator identity and budgets are isolated between businesses, without inheriting root AI',async()=>{
+ await create('alice');await create('bob');
+ const a='/b/alice/api/creator',b='/b/bob/api/creator';
+ assert.equal((await request(a+'/profile',{name:'Marca Alice',instagram:'alicecuts'},'alice')).status,200);
+ const limits={barber:1,educator:2,founder:3,member:1,owner:2};assert.equal((await request(a+'/limits',limits,'alice')).status,200);
+ env.OPENAI_API_KEY='root-local-test-only';
+ const own=(await request(a,undefined,'alice')).data,other=(await request(b,undefined,'bob')).data;
+ assert.equal(own.profile.name,'Marca Alice');assert.equal(other.profile.name,undefined);assert.equal(own.access.dailyLimit,2);assert.equal(other.access.dailyLimit,8);assert.equal(own.aiConfigured,false);assert.equal(other.aiConfigured,false);
+ assert.equal((await request(a,undefined,'bob')).status,403);assert.equal((await request('/api/creator',undefined,'alice')).status,403);
 });

@@ -1,3 +1,4 @@
+import {sectorAllowsAPI} from './business-sectors.js';
 import {platformState,effectiveCompany} from './platform.js';
 import {companyEnvironment,companyLicensed,scopeText} from './tenancy.js';
 export async function routeWorkspace(req,env,app){
@@ -10,6 +11,7 @@ export async function routeWorkspace(req,env,app){
  if(rest.startsWith('/api/saas/'))return Response.json({error:'Operação indisponível nesta empresa.'},{status:404});
  if(!match[2])return Response.redirect(url.origin+base+'/'+url.search,302);
  if(rest.startsWith('/api/')&&req.method==='POST'&&!companyLicensed(company)&&!['/api/webhook','/api/whatsapp/webhook','/api/portal'].includes(rest))return Response.json({error:'Licença da empresa vencida ou pausada. O responsável pode regularizar em '+url.origin+'/sistema.'},{status:402});
+ if(rest.startsWith('/api/')&&!sectorAllowsAPI(company,rest))return Response.json({error:'Este módulo ainda não está disponível para o ramo desta empresa.'},{status:403});
  const internal=new URL(req.url);internal.pathname=rest;headers.set('x-joao-workspace-base',base);
  const response=await app(new Request(internal,new Request(req,{headers})),companyEnvironment(env,company));
  const outHeaders=new Headers(response.headers);outHeaders.delete('content-length');

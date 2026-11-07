@@ -1,17 +1,18 @@
+import {BUSINESS_SECTORS,normalizeBusiness,businessCapabilities,sectorSeedStatements} from './business-sectors.js';
 import {companySchemaStatements,companyLicensed} from './tenancy.js';
 const KEY='platform_state',DAY=86400;
-const defaults={signupEnabled:true,billingEnabled:false,trialDays:7,plans:[{id:'sistema',name:'Sistema para Barbearias',price:0},{id:'fundador',name:'Educador fundador EU SOU',price:0,founder:true,included:true}]};
+const defaults={signupEnabled:true,billingEnabled:false,trialDays:7,plans:[{id:'sistema',name:'Sistema de Gestão',price:0},{id:'fundador',name:'Educador fundador EU SOU',price:0,founder:true,included:true}]};
 export async function platformState(db){const row=await db.prepare('SELECT value FROM config WHERE key=?').bind(KEY).first();return {raw:row?.value??null,state:row?JSON.parse(row.value):{settings:structuredClone(defaults),companies:[],revision:0}}}
 function statements(db,raw,state){const value=JSON.stringify({...state,revision:(state.revision||0)+1});if(raw===null)return [db.prepare('INSERT INTO config(key,value) VALUES(?,?)').bind(KEY,value)];return [db.prepare('INSERT INTO config(key,value) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM config WHERE key=? AND value=?)').bind(KEY,'{}',KEY,raw),db.prepare('UPDATE config SET value=? WHERE key=?').bind(value,KEY)]}
 async function mutate(db,fn){for(let i=0;i<6;i++){const {raw,state}=await platformState(db);const result=await fn(state);try{await db.batch([...statements(db,raw,state),...(result.statements||[])]);return result.data}catch(e){if(!String(e).includes('UNIQUE constraint failed: config.key'))throw e}}throw Object.assign(new Error('Outra atualização está em andamento. Tente novamente.'),{status:409})}
-const details=x=>({id:x.id,name:x.name,slug:x.slug,ownerEmail:x.ownerEmail,plan:x.plan,trialUntil:x.trialUntil,paidUntil:x.paidUntil,status:x.status,paused:x.paused,licensed:companyLicensed(x),path:'/b/'+x.slug+'/',customerLinked:!!x.customerId,subscriptionLinked:!!x.subscriptionId});
+const details=x=>({id:x.id,name:x.name,slug:x.slug,ownerEmail:x.ownerEmail,plan:x.plan,trialUntil:x.trialUntil,paidUntil:x.paidUntil,status:x.status,paused:x.paused,licensed:companyLicensed(x),path:'/b/'+x.slug+'/',business:businessCapabilities(x),customerLinked:!!x.customerId,subscriptionLinked:!!x.subscriptionId});
 const companyBy=(state,id,u,h)=>{const x=state.companies.find(x=>x.id===id);if(!x||x.ownerId!==u.id)throw h.err('Empresa indisponível para esta conta.',403);return x};
 const founder=async(db,u,h)=>!!await h.first(db,"SELECT user_id FROM eu_members WHERE user_id=? AND role='founder' AND paid_until>?",u.id,h.now());
 export async function effectiveCompany(db,company){if(company.plan!=='fundador')return company;const member=await db.prepare("SELECT paid_until FROM eu_members WHERE user_id=? AND role='founder'").bind(company.ownerId).first();return {...company,trialUntil:0,paidUntil:member?.paid_until||0,status:member?.paid_until>Math.floor(Date.now()/1000)?'included':'community_expired'}}
 
 export async function platformRoutes(req,env,url,u,c,h){
  const p=url.pathname,db=env.DB;if(!p.startsWith('/api/saas/'))return null;
- if(p==='/api/saas/public'&&req.method==='GET'){const {state}=await platformState(db);return h.json({settings:state.settings,limit:20,note:'Cada empresa recebe área própria. Recebimentos de seus clientes exigem sua própria conexão de pagamentos. Todas as empresas usam as mesmas funcionalidades. IA, publicação e mensagens exigem conexões próprias e consumo no provedor.'})}
+ if(p==='/api/saas/public'&&req.method==='GET'){const {state}=await platformState(db);return h.json({settings:state.settings,sectors:BUSINESS_SECTORS,limit:20,note:'Cada empresa recebe área própria. Recebimentos de seus clientes exigem sua própria conexão de pagamentos. Os módulos disponíveis dependem do ramo. IA, publicação e mensagens exigem conexões próprias e consumo no provedor.'})}
  if(!u)throw h.err('Entre com sua conta para continuar.',401);
  if(p==='/api/saas/me'&&req.method==='GET'){const {state}=await platformState(db);state.companies=await Promise.all(state.companies.map(x=>effectiveCompany(db,x)));return h.json({owner:h.owner(u),name:u.name,email:u.email,companies:state.companies.filter(x=>x.ownerId===u.id).map(details),settings:state.settings,founderEligible:await founder(db,u,h),...(h.owner(u)?{portfolio:state.companies.map(details)}:{})})}
  if(p==='/api/saas/settings'&&req.method==='POST'){
@@ -21,15 +22,15 @@ export async function platformRoutes(req,env,url,u,c,h){
   await mutate(db,state=>{state.settings={signupEnabled:b.signupEnabled,billingEnabled:b.billingEnabled,trialDays:b.trialDays,plans};return {data:{ok:true}}});await h.audit(db,u.id,null,'platform.settings.updated',{});return h.json({ok:true});
  }
  if(p==='/api/saas/create'&&req.method==='POST'){
-  const b=await h.body(req);if(typeof b.name!=='string'||!(/^[\p{L}\p{N} .&()-]{3,70}$/u).test(b.name)||typeof b.slug!=='string'||!(/^[a-z0-9][a-z0-9-]{2,39}$/).test(b.slug)||!b.confirm)throw h.err('Informe nome, endereço simples e confirme a criação.');
+  const b=await h.body(req),business=normalizeBusiness({sector:b.sector,sectorLabel:b.sectorLabel,size:b.size});if(typeof b.name!=='string'||!(/^[\p{L}\p{N} .&()-]{3,70}$/u).test(b.name)||typeof b.slug!=='string'||!(/^[a-z0-9][a-z0-9-]{2,39}$/).test(b.slug)||!b.confirm)throw h.err('Informe nome, endereço simples e confirme a criação.');
   const founderRecord=b.plan==='fundador'?await h.first(db,"SELECT paid_until FROM eu_members WHERE user_id=? AND role='founder' AND paid_until>?",u.id,h.now()):null;if(b.plan==='fundador'&&!founderRecord)throw h.err('A condição de fundador exige matrícula fundadora paga e vigente no EU SOU.',403);
   const data=await mutate(db,state=>{
    if(!state.settings.signupEnabled)throw h.err('Novos cadastros estão temporariamente pausados.',409);
    const existing=state.companies.find(x=>x.ownerId===u.id);if(existing){if(existing.slug===b.slug)return {data:{ok:true,company:details(existing),replayed:true}};throw h.err('Esta conta já possui uma empresa no piloto.',409)}
    if(state.companies.length>=20)throw h.err('Limite de empresas do piloto alcançado.',409);if(state.companies.some(x=>x.slug===b.slug))throw h.err('Este endereço já está em uso.',409);
    const plan=state.settings.plans.find(x=>x.id===b.plan);if(!plan)throw h.err('Escolha um plano válido.');
-   const x={id:crypto.randomUUID().replaceAll('-',''),name:b.name.trim(),slug:b.slug,ownerId:u.id,ownerEmail:u.email.toLowerCase(),plan:plan.id,status:founderRecord?'included':'trial',trialUntil:founderRecord?0:h.now()+state.settings.trialDays*DAY,paidUntil:founderRecord?.paid_until||0,createdAt:h.now(),paused:false};state.companies.push(x);
-   return {data:{ok:true,company:details(x)},statements:companySchemaStatements(db,x)};
+   const x={id:crypto.randomUUID().replaceAll('-',''),name:b.name.trim(),business,slug:b.slug,ownerId:u.id,ownerEmail:u.email.toLowerCase(),plan:plan.id,status:founderRecord?'included':'trial',trialUntil:founderRecord?0:h.now()+state.settings.trialDays*DAY,paidUntil:founderRecord?.paid_until||0,createdAt:h.now(),paused:false};state.companies.push(x);
+   return {data:{ok:true,company:details(x)},statements:[...companySchemaStatements(db,x),...sectorSeedStatements(db,x,h.SERVICES||[])]};
   });await h.audit(db,u.id,data.company.id,'platform.company.created',{});return h.json(data,201);
  }
  if(p==='/api/saas/company'&&req.method==='POST'){h.requireOwner(u);const b=await h.body(req);if(typeof b.paused!=='boolean')throw h.err('Informe o estado da empresa.');await mutate(db,state=>{const x=state.companies.find(x=>x.id===b.id);if(!x)throw h.err('Empresa inexistente.',404);x.paused=b.paused;return {data:{ok:true}}});await h.audit(db,u.id,b.id,'platform.company.access.updated',{paused:b.paused});return h.json({ok:true})}
