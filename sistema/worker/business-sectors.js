@@ -24,7 +24,7 @@ export function businessCapabilities(company){
  const business=normalizeBusiness(company.business||{}),def=BUSINESS_SECTORS.find(x=>x.id===business.sector);
  return {...business,modules:[...def.modules],upcoming:[...def.upcoming],pilot:true,multiUnit:false};
 }
-const agenda=['appointments','appointment-status','appointment-finish-next','appointment-confirm','appointment-reschedule','appointment-receipt','agenda-block','slots','professional-hours','agenda-vacation','catalog','booking-rules','waitlist','analytics','goals','assistant-prepare'];
+const agenda=['calendar','management-booking','appointments','appointment-status','appointment-finish-next','appointment-confirm','appointment-reschedule','appointment-receipt','agenda-block','slots','professional-hours','agenda-vacation','catalog','booking-rules','waitlist','analytics','goals','assistant-prepare'];
 const legacy=['membership','checkout','portal','invoices','club-commissions','commissions','community-billing','academy','eusou','growth','retention','care','dependents','pricing','business-health','whatsapp'];
 export function sectorAllowsAPI(company,path){
  const caps=businessCapabilities(company);if(caps.sector==='barbearia')return true;
@@ -44,7 +44,7 @@ export function businessDocument(html){return html.replace('Sua barbearia, organ
 
 export const BUSINESS_UI=String.raw`
 function genericBusiness(){return S.workspace?.business?.sector&&S.workspace.business.sector!=='barbearia'}
-function businessPageAllowed(page){if(!genericBusiness())return true;const core=['home','clients','operations','profile','brand','settings','access','system','backups','studio','creator','work','personal','purchases','shop'];return core.includes(page)||S.workspace.business.modules.includes('agenda')&&['agenda','book','catalog','waitlist'].includes(page)}
+function businessPageAllowed(page){if(!genericBusiness())return true;const core=['home','clients','operations','profile','brand','settings','access','system','backups','studio','creator','work','joana','joana-cloud','personal','purchases','shop'];return core.includes(page)||S.workspace.business.modules.includes('agenda')&&['agenda','book','catalog','waitlist'].includes(page)}
 async function businessGo(page){
  if(!genericBusiness()||page!=='home')return false;
  const business=S.workspace.business,staff=S.user.role==='manager'&&S.permissions.finance;let stats='';

@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {randomBytes} from 'node:crypto';
 import {TENANT_SCHEMA} from '../worker/tenant-schema.js';
 import {scopeSQL} from '../worker/tenancy.js';
 import {collectSnapshot,sealBackup,openBackup,createBackup,backupRoutes} from '../worker/backups.js';
@@ -40,4 +41,25 @@ test('root backup captures all registered companies in one snapshot and readback
 });
 test('no partial backup when a table exceeds bounds and unauthorized callers cannot list or download',async()=>{
  const {db,env,objects}=setup();try{const insert=db.prepare('INSERT INTO users(id,email,name) VALUES(?,?,?)');for(let i=0;i<1001;i++)insert.run(String(i),'x'+i+'@example.com','X');await assert.rejects(()=>createBackup(env),/1.000/);assert.equal(objects.size,0);const req=new Request('https://test.example/api/backups');await assert.rejects(()=>backupRoutes(req,env,new URL(req.url),{}, {requireOwner(){throw Object.assign(new Error('Forbidden'),{status:403})}}),/Forbidden/)}finally{db.close()}
+});
+test('large media snapshots are compressed, encrypted and fully restored; old backups stay readable',async()=>{
+ const {db,env,objects}=setup(),dir=mkdtempSync(join(tmpdir(),'joao-large-recovery-'));
+ try{
+  const old=await sealBackup(await collectSnapshot(env),env);assert.equal(old.version,1);await openBackup(old,env);
+  const media=randomBytes(7*1024*1024).toString('base64');
+  db.prepare('INSERT INTO config(key,value) VALUES(?,?)').run('studio_test_media',JSON.stringify({media}));
+  const created=await createBackup(env);assert.equal(created.verified,true);
+  const envelope=JSON.parse([...objects.values()][0]);assert.equal(envelope.version,2);assert.equal(envelope.compression,'gzip');assert.ok(envelope.plainBytes>8*1024*1024);
+  const decoded=await openBackup(envelope,env),path=join(dir,'restored.sqlite');restoreNewDatabase(decoded,path);
+  const restored=new DatabaseSync(path);try{assert.equal(JSON.parse(restored.prepare("SELECT value FROM config WHERE key='studio_test_media'").get().value).media,media)}finally{restored.close()}
+  await assert.rejects(()=>openBackup({...envelope,plainBytes:envelope.plainBytes+1},env),/proteção/);
+  await assert.rejects(()=>openBackup({...envelope,plainBytes:25*1024*1024},env),/Estrutura/);
+  await assert.rejects(()=>openBackup({...envelope,compression:'unknown'},env),/Estrutura/);
+ }finally{db.close();rmSync(dir,{recursive:true,force:true})}
+});
+test('oversized snapshots fail without saving a partial backup',async()=>{
+ const {db,env,objects}=setup();try{
+  db.prepare('INSERT INTO config(key,value) VALUES(?,?)').run('studio_oversized','x'.repeat(24*1024*1024));
+  await assert.rejects(()=>createBackup(env),/24 MB/);assert.equal(objects.size,0);
+ }finally{db.close()}
 });

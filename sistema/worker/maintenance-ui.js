@@ -4,7 +4,7 @@ function renderNavigation(nav){
  const generic=S.workspace?.business?.sector&&S.workspace.business.sector!=='barbearia';
  const primary=generic?['home','clients','operations','profile']:role==='client'?['home','book','agenda','plans']:role==='barber'?['home','agenda','insights','clubpay']:['home','agenda','clients','billing'];
  const button=([p,i,t])=>'<button data-go="'+p+'" class="'+(S.page===p?'active':'')+'"'+(S.page===p?' aria-current="page"':'')+'>'+I(i)+E(t)+'</button>';
- const main=role==='client'?['home','book','agenda','plans','billing','shop','profile']:['home','agenda','clients','billing','plans','profile'];
+ const main=role==='client'?['home','book','agenda','plans','billing','shop','profile']:['home','agenda','clients','billing','plans','joana','joana-cloud','profile'];
  const groups=[['Marca e sistema',['brand','software']],['Financeiro',['health','pricing','clubpay','personal','operations','commissions']],['Gestão e vendas',['insights','growth','purchases','care','waitlist','retention','fox']],['Formação e conteúdo',['eusou','community','academy','studio','creator','work','editorial','assistant']],['Configurações',['settings','catalog','whatsapp','access','backups','system','install']]];
  const used=new Set(main);
  const group=(label,items)=>items.length?'<details class="nav-group" '+(label==='Marca e sistema'||items.some(x=>x[0]===S.page)?'open':'')+'><summary>'+E(label)+'</summary><div class="nav-group-items">'+items.map(button).join('')+'</div></details>':'';

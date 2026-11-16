@@ -66,7 +66,7 @@ export async function agendaRulesRoutes(req,env,url,u,c,h){
 
 // Expand persisted reservation intervals, including legacy 30-minute slot rows.
 export async function occupiedTimes(db,barber,date,exclude=''){
- const {results}=await db.prepare('SELECT DISTINCT a.id,a.time,a.duration FROM appointments a JOIN slots s ON s.appointment_id=a.id WHERE s.barber_id=? AND s.date=? AND a.id<>?').bind(barber,date,exclude).all();
+ const {results}=await db.prepare("SELECT a.id,a.time,a.duration FROM appointments a WHERE a.barber_id=? AND a.date=? AND a.id<>? AND a.status<>'canceled'").bind(barber,date,exclude).all();
  const times=new Set();for(const a of results){const start=toMinutes(a.time);for(let n=start;n<start+a.duration;n+=15)times.add(String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0'));}return [...times].map(time=>({time}));
 }
-export function reservationMinutes(service,extras=[]){return service.minutes+(['corte','barba','combo'].includes(service.id)?0:extras.reduce((n,s)=>n+s.minutes,0));}
+export function reservationMinutes(service){return service.minutes;}
