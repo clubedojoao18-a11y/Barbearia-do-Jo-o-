@@ -40,7 +40,7 @@ export async function videoRunnerRoutes(req,env,url,h){
  }
  if(action==='finish'){
   if(!j.cuts?.length||j.cuts.some((_,i)=>!j.clips?.[i]))throw fail('Envie todos os cortes antes de concluir.',409);
-  for(let i=0;i<j.cuts.length;i++){const cut=j.cuts[i],a=j.clips[i];await appendStudioJob(env.DB,{id:'video-'+j.id+'-'+i,project:j.project,topic:'tecnica',format:'reel',title:cut.title,caption:cut.caption,slides:[{title:cut.title,body:'Corte de aula autorizado'}],assets:[{id:a.asset,token:a.token,video:true}],status:j.authorized?'ready':'draft',authorized:j.authorized,createdAt:stamp(),dueAt:stamp(),lockUntil:0})}
+  for(let i=0;i<j.cuts.length;i++){const cut=j.cuts[i],a=j.clips[i];await appendStudioJob(env.DB,{id:'video-'+j.id+'-'+i,project:j.project,topic:'tecnica',format:'reel',videoSource:'recorded',title:cut.title,caption:cut.caption,slides:[{title:cut.title,body:'Corte de aula autorizado'}],assets:[{id:a.asset,token:a.token,video:true}],status:j.authorized?'ready':'draft',authorized:j.authorized,createdAt:stamp(),dueAt:stamp(),lockUntil:0})}
   await edit(env.DB,s=>{const x=s.jobs.find(x=>x.id===j.id);if(x.lease!==j.lease)throw fail('Executor substituído.',409);x.status='done';x.finishedAt=stamp();delete x.lease});return h.json({ok:true,clips:j.cuts.length});
  }
  if(action==='fail'){await edit(env.DB,s=>{const x=s.jobs.find(x=>x.id===j.id);if(x.lease!==j.lease)throw fail('Executor substituído.',409);x.status='error';x.error='Processamento interrompido. Confira o executor e a cota de IA antes de repetir.';delete x.lease});return h.json({ok:true})}

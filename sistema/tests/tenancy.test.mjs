@@ -21,6 +21,7 @@ test('retail onboarding isolates a common core, hides haircut services and enfor
  const me=await request('/b/loja-alice/api/me',undefined,'alice');assert.equal(me.status,200);assert.deepEqual(me.data.services,[]);
  assert.equal((await request('/b/loja-alice/api/appointments',undefined,'alice')).status,403);
  assert.equal((await request('/b/loja-alice/api/appointments',book('alice'),'alice')).status,403);
+ assert.equal((await request('/b/loja-alice/api/management-booking',{...book('alice'),customer:'missing'},'alice')).status,403);
  assert.equal((await request('/b/loja-alice/api/eusou',undefined,'alice')).status,403);
  assert.equal((await request('/b/loja-alice/api/products',{name:'Produto real',price:2000,cost:1000,minimum:1},'alice')).status,200);
  assert.equal((await request('/b/loja-alice/api/operations',undefined,'alice')).data.products.length,1);
@@ -157,4 +158,10 @@ test('personal creator identity and budgets are isolated between businesses, wit
  const own=(await request(a,undefined,'alice')).data,other=(await request(b,undefined,'bob')).data;
  assert.equal(own.profile.name,'Marca Alice');assert.equal(other.profile.name,undefined);assert.equal(own.access.dailyLimit,2);assert.equal(other.access.dailyLimit,8);assert.equal(own.aiConfigured,false);assert.equal(other.aiConfigured,false);
  assert.equal((await request(a,undefined,'bob')).status,403);assert.equal((await request('/api/creator',undefined,'alice')).status,403);
+});
+test('customer access pages and sessions stay inside their company without inheriting vendor mail credentials',async()=>{
+ await create('alice');const page=await request('/b/alice/acesso');assert.equal(page.status,200);assert.match(page.data,/src="\/b\/alice\/acesso.js"/);assert.match(page.data,/href="\/b\/alice\/acesso#register"/);
+ const script=await request('/b/alice/acesso.js');assert.equal(script.status,200);assert.match(script.data,/fetch\('\/b\/alice\/api\/auth\//);assert.match(script.data,/authBase\+'\/'/);new Function(script.data);
+ env.RESEND_API_KEY='vendor-only-test-key';env.AUTH_EMAIL_FROM='owner@example.com';assert.equal((await request('/api/auth/status')).data.emailReady,true);assert.equal((await request('/b/alice/api/auth/status')).data.emailReady,false);
+ assert.equal((await request('/b/alice/api/me',undefined,'bob',{Cookie:'__Secure-joao-client-root='+'f'.repeat(64)})).data.user.role,'client');
 });

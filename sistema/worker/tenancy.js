@@ -34,7 +34,7 @@ export function companyEnvironment(env,company){
 }
 export function companyLicensed(company,now=Math.floor(Date.now()/1000)){return !company.paused&&(company.trialUntil>now||company.paidUntil>now)}
 export function scopeText(text,base,name){
- const urls=['/api/','/app.js','/manifest.webmanifest','/sw.js','/icon.svg','/icons/','/instalar','/?'];
+ const urls=['/acesso.js','/acesso','/api/','/app.js','/manifest.webmanifest','/sw.js','/icon.svg','/icons/','/instalar','/?'];
  for(const path of urls)text=text.replaceAll('"'+path,'"'+base+path).replaceAll("'"+path,"'"+base+path);
  text=text.replaceAll('href="/"','href="'+base+'/"');
  text=text.replace(/(\/sign(?:in|out)-with-chatgpt\?return_to=)([^"'<>\\\s]+)/g,(_,start,path)=>{try{return start+encodeURIComponent(base+decodeURIComponent(path))}catch{return start+encodeURIComponent(base+'/')}});

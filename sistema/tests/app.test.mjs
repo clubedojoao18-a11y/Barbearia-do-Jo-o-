@@ -229,7 +229,7 @@ try{await req('/api/me');const result=await req('/api/connect-account',{provider
 test('owner can appoint managers and future verified-email team members without losing ownership',async()=>{await req('/api/me');assert.equal((await req('/api/team',{email:'newmanager@example.com',role:'manager'})).status,200);const m=await req('/api/me',undefined,'newmanager');assert.equal(m.data.user.role,'manager');assert.equal(m.data.isOwner,false);assert.equal(m.data.barbers.some(b=>b.id==='newmanager'),false);assert.equal((await req('/api/access',undefined,'newmanager')).status,403);assert.equal((await req('/api/role',{id:'owner',role:'client'},'newmanager')).status,403);assert.equal((await req('/api/role',{id:'owner',role:'client'})).status,400);assert.equal((await req('/api/connect-account',{provider:'stripe'},'newmanager')).status,403);assert.equal((await req('/api/access')).data.pending.length,0)});
 test('global restrictions apply at API level and individual overrides restore permitted actions',async()=>{await req('/api/me');await initClient();await req('/api/access',{policies:{client:{book:false,cancel:false,changeplan:false}}});assert.equal((await req('/api/appointments',booking(),'client')).status,403);assert.equal((await req('/api/membership',{plan:'ouro',day:10},'client')).status,403);await req('/api/access',{id:'client',permissions:{book:true},disabled:false});assert.equal((await req('/api/appointments',booking(),'client')).status,201);assert.equal((await req('/api/access',{id:'client',permissions:{finance:true}})).status,400);assert.equal((await req('/api/access',{policies:{client:{book:true}}},'client')).status,403)});
 test('suspended users cannot access data while owner remains available',async()=>{await req('/api/me');await initClient();await req('/api/access',{id:'client',permissions:{},disabled:true});assert.equal((await req('/api/me',undefined,'client')).status,403);assert.equal((await req('/api/appointments',undefined,'client')).status,403);assert.equal((await req('/api/access',{id:'owner',disabled:true})).status,400);assert.equal((await req('/api/me')).status,200)});
-test('barber contact visibility and completion restrictions are enforced server side',async()=>{await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});const a=await req('/api/appointments',{...booking(),barber:'barber'},'client');assert.equal(a.status,201);let records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records[0].phone,undefined);await req('/api/access',{id:'barber',permissions:{contacts:true,complete:false},disabled:false});records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records[0].phone,'24999999999');assert.equal((await req('/api/appointment-status',{id:a.data.id,status:'done'},'barber')).status,403);assert.equal((await req('/api/analytics',undefined,'client')).status,403)});
+test('barber contact visibility and completion restrictions are enforced server side',async()=>{await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});await req('/api/access',{id:'barber',permissions:{contacts:false},disabled:false});const a=await req('/api/appointments',{...booking(),barber:'barber'},'client');assert.equal(a.status,201);let records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records[0].phone,undefined);await req('/api/access',{id:'barber',permissions:{contacts:true,complete:false},disabled:false});records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records[0].phone,'24999999999');assert.equal((await req('/api/appointment-status',{id:a.data.id,status:'done'},'barber')).status,403);assert.equal((await req('/api/analytics',undefined,'client')).status,403)});
 test('analytics uses actual completed services and separates subscriptions from recorded avulsos',async()=>{await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});for(const [id,kind,price,status,service] of [['a','single',4000,'done','corte'],['b','single',6000,'done','combo'],['c','club',0,'done','corte'],['d','single',4000,'no_show','corte']])db.prepare('INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind,status) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,'client','barber',today(),'10:00',service,30,price,kind,status);const paid=Math.floor(Date.now()/1000);db.prepare('INSERT INTO invoices(id,user_id,amount,status,paid_at,created_at) VALUES(?,?,?,?,?,?)').run('i1','client',11985,'paid',paid,paid);const a=(await req('/api/analytics')).data;assert.equal(a.kpis.completed,3);assert.equal(a.kpis.ticket,5000);assert.equal(a.kpis.singleValue,10000);assert.equal(a.kpis.subscriptionReceived,11985);assert.equal(a.kpis.noShowRate,25);assert.equal(a.services[0].id,'corte');assert.equal(a.services[0].count,2);const own=(await req('/api/analytics',undefined,'barber')).data;assert.equal(own.kpis.completed,3);assert.equal(own.financial,false);assert.equal(own.kpis.ticket,null);assert.equal(own.services[0].value,null);assert.equal(own.barbers.length,1)});
 test('manager without finance or contacts cannot retrieve amounts or phone numbers',async()=>{await req('/api/me');await initClient('limited');await initClient();await req('/api/role',{id:'limited',role:'manager'});await req('/api/access',{id:'limited',permissions:{finance:false,contacts:false},disabled:false});const manage=(await req('/api/manage',undefined,'limited')).data;assert.deepEqual(manage.invoices,[]);assert.ok(manage.users.every(x=>x.phone===undefined));const stats=(await req('/api/analytics',undefined,'limited')).data;assert.equal(stats.kpis.subscriptionReceived,null);assert.equal(stats.financial,false)});
 test('assistant prepares a draft and never books without a separate confirmation',async()=>{await req('/api/me');await initClient();const r=await req('/api/assistant-prepare',{text:'Corte e barba amanhã às 15h30'},'client');assert.equal(r.status,200);assert.equal(r.data.mode,'guided');assert.equal(r.data.draft.service,'combo');assert.equal(r.data.draft.time,'15:30');assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);await req('/api/access',{id:'client',permissions:{assistant:false},disabled:false});assert.equal((await req('/api/assistant-prepare',{text:'Corte amanhã às 10h'},'client')).status,403)});
@@ -261,7 +261,7 @@ test('rate limits persist across worker environment instances and isolate users'
 test('barber cannot read appointment financial amounts even by direct API request',async()=>{
  await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
  await req('/api/appointments',{...booking(),barber:'barber'},'client');
- const records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records.length,1);assert.equal(records[0].price,null);assert.equal(records[0].phone,undefined);
+ const records=(await req('/api/appointments',undefined,'barber')).data;assert.equal(records.length,1);assert.equal(records[0].price,null);assert.equal(records[0].phone,'24999999999');
  assert.equal((await req('/api/appointments',undefined,'client')).data[0].price>0,true);
 });
 test('signed test events cannot validate a production connection or change balances',async()=>{
@@ -321,6 +321,7 @@ test('paid invoice grants club access once; failed renewal and cancellation foll
 });
 
 async function waSetup(){
+ env.CONNECTION_MASTER_KEY=btoa('k'.repeat(32));
  env.WHATSAPP_APP_SECRET='meta-secret-for-local-tests';env.WHATSAPP_ACCESS_TOKEN='meta-test-token';env.WHATSAPP_PHONE_NUMBER_ID='1234567890';env.WHATSAPP_VERIFY_TOKEN='verify-for-tests';
  db.prepare("INSERT INTO config(key,value) VALUES('whatsapp',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({enabled:true,templates:{}}));
 }
@@ -671,4 +672,164 @@ test('WhatsApp payment limitation remains separate from receipt evidence',async(
  db.prepare("INSERT INTO config(key,value) VALUES('studio_integration_health',?)").run(JSON.stringify({checkedAt:123,whatsapp:{phoneHealth:{health:{entities:[{errors:[{error_code:141006},{error_code:141010}]}]}}}}));
  const readiness=(await req('/api/whatsapp/admin')).data.readiness;
  assert.equal(readiness.paymentBlocked,true);assert.equal(readiness.businessLimited,true);assert.equal(readiness.receiptVerified,false);assert.match(readiness.paymentLabel,/iniciadas pela empresa/);
+});
+
+
+test('only authorized management can read the encrypted WhatsApp transcript',async()=>{
+ await req('/api/me');await waSetup();const mock=mockMeta();
+ try{
+  await waSend('mensagem privada para gestão','history-private-1');
+  const history=await req('/api/whatsapp/admin/conversation?wa=5524999999999');
+  assert.equal(history.status,200);assert.ok(history.data.messages.some(m=>m.text==='mensagem privada para gestão'));
+  const config=(await req('/api/manage')).data.config;
+  assert.equal(Object.keys(config).some(k=>k.startsWith('wa_message:')),false);
+  assert.equal((await req('/api/whatsapp/admin/conversation?wa=5524999999999',undefined,'other')).status,403);
+  assert.equal((await req('/api/whatsapp/admin/conversation?wa=*')).status,400);
+ }finally{mock.restore()}
+});
+
+test('management registers normalized customers without creating credentials or sending invitations',async()=>{
+ await req('/api/me');const r=await req('/api/clients',{name:' Cliente Novo ',phone:'(24) 99836-1641',email:' NOVO@example.com '});
+ assert.equal(r.status,201,JSON.stringify(r.data));assert.equal(r.data.client.phone,'5524998361641');assert.equal(r.data.client.email,'novo@example.com');
+ const customer=db.prepare('SELECT * FROM users WHERE id=?').get(r.data.client.id);assert.equal(customer.role,'client');assert.equal(customer.name,'Cliente Novo');
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='client.created'").get().n,1);
+ assert.equal((await req('/api/manage')).data.config['client_identity:email:novo@example.com'],undefined);
+ assert.equal((await req('/api/clients?q=Cliente%20Novo')).data.clients.length,1);
+ assert.equal((await req('/api/clients?q=%25')).data.clients.length,0);
+});
+test('customer registration rejects duplicates, invalid data and owner email without partial writes',async()=>{
+ await req('/api/me');const payload={name:'Cliente Novo',phone:'24988887777',email:'novo@example.com'};
+ assert.equal((await req('/api/clients',payload)).status,201);
+ for(const x of [{...payload,email:'outro@example.com',phone:'+55 (24) 98888-7777'},{...payload,phone:'24988886666'},{...payload,phone:'24988885555',email:'clubedojoao18@gmail.com'},{...payload,phone:'abc123'}, {...payload,phone:'24988885555',email:'invalid'}]){
+  const r=await req('/api/clients',x);assert.ok([400,409].includes(r.status),JSON.stringify(r));
+ }
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n,2);
+ const optional=await req('/api/clients',{name:'Sem email',phone:'24977776666'});assert.equal(optional.status,201);assert.equal(optional.data.client.email,'');
+});
+test('customer registration and search enforce management contact and client permissions',async()=>{
+ await req('/api/me');await initClient();
+ assert.equal((await req('/api/clients',undefined,'client')).status,403);
+ assert.equal((await req('/api/clients',{name:'Outra pessoa',phone:'24988887777'},'client')).status,403);
+ await req('/api/role',{id:'client',role:'barber'});assert.equal((await req('/api/clients',undefined,'client')).status,200);await req('/api/access',{id:'client',permissions:{clients:false},disabled:false});assert.equal((await req('/api/clients',undefined,'client')).status,403);
+ await initClient('limited');await req('/api/role',{id:'limited',role:'manager'});await req('/api/access',{id:'limited',permissions:{contacts:false},disabled:false});
+ assert.equal((await req('/api/clients',undefined,'limited')).status,403);
+ assert.equal((await req('/api/management-booking',{},'limited')).status,403);
+});
+test('verified ChatGPT email reuses the manual customer record and its reservations',async()=>{
+ await req('/api/me');const r=await req('/api/clients',{name:'Cliente Previo',phone:'24988887777',email:'claim@example.com'}),id=r.data.client.id;
+ const book=await req('/api/management-booking',{...booking(),customer:id});assert.equal(book.status,201,JSON.stringify(book.data));
+ const me=await req('/api/me',undefined,'claim');assert.equal(me.data.user.id,id);assert.equal(me.data.user.name,'Cliente Previo');
+ const appts=await req('/api/appointments',undefined,'claim');assert.equal(appts.data.length,1);assert.equal(appts.data[0].id,book.data.id);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE lower(email)=?').get('claim@example.com').n,1);
+ await req('/api/access',{id,permissions:{},disabled:true});assert.equal((await req('/api/me',undefined,'claim')).status,403);
+});
+test('management reservations occupy complete duration and preserve existing reservations on conflicts',async()=>{
+ await req('/api/me');const r=await req('/api/clients',{name:'Cliente Encaixe',phone:'24988887777'}),customer=r.data.client.id;
+ const first=await req('/api/management-booking',{...booking(),customer});assert.equal(first.status,201,JSON.stringify(first.data));
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(first.data.id).n,6);
+ assert.equal((await req('/api/management-booking',{...booking(),time:'10:45',customer})).status,409);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM appointments WHERE status='scheduled'").get().n,1);
+ assert.equal((await req('/api/management-booking',{...booking(),time:'11:30',customer})).status,201);
+ const ch=db.prepare('SELECT channel FROM appointment_channels WHERE appointment_id=?').get(first.data.id);assert.equal(ch.channel,'management');
+});
+test('management reservations enforce unpaid clubs, valid customer, scope, breaks and future dates',async()=>{
+ await req('/api/me');await initClient();const customer='client';
+ assert.equal((await req('/api/management-booking',{...booking(),customer},'client')).status,403);
+ assert.equal((await req('/api/management-booking',{...booking(),customer:'owner'})).status,400);
+ assert.equal((await req('/api/management-booking',{...booking(),customer:'missing'})).status,400);
+ assert.equal((await req('/api/management-booking',{...booking(),customer,date:'2020-01-01'})).status,400);
+ const weekday=new Date(nextDate()+'T12:00:00Z').getUTCDay();await req('/api/professional-hours',{barber:'owner',days:[weekday],periods:[{open:'09:00',close:'12:00'},{open:'14:00',close:'20:00'}]});
+ assert.equal((await req('/api/management-booking',{...booking(),customer,time:'11:30'})).status,400);
+ db.prepare("INSERT INTO memberships(user_id,plan_id,billing_day,status,paid_until) VALUES('client','ouro',10,'past_due',0)").run();
+ assert.equal((await req('/api/management-booking',{...booking(),customer,time:'14:00'})).status,402);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM appointments').get().n,0);
+});
+test('simultaneous customer registrations reserve each identity atomically',async()=>{
+ await req('/api/me');const payload={name:'Concorrente',phone:'24988881111',email:'concurrent@example.com'};
+ const replies=await Promise.all([req('/api/clients',payload),req('/api/clients',payload)]);
+ assert.deepEqual(replies.map(r=>r.status).sort(),[201,409]);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM users WHERE email='concurrent@example.com'").get().n,1);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='client.created'").get().n,1);
+});
+test('manual customer routes keep registrations and verified email claims inside the company',async()=>{
+ await req('/api/me');const created=await req('/api/saas/create',{name:'Empresa Teste',slug:'cadastro-teste',plan:'sistema',confirm:true});
+ assert.equal(created.status,201,JSON.stringify(created.data));
+ const base='/b/cadastro-teste',r=await req(base+'/api/clients',{name:'Cliente Empresa',phone:'24988887777',email:'scoped@example.com'});
+ assert.equal(r.status,201,JSON.stringify(r.data));
+ assert.equal((await req('/api/clients?q=scoped')).data.clients.length,0);
+ assert.equal((await req(base+'/api/clients?q=scoped')).data.clients.length,1);
+ const me=await req(base+'/api/me',undefined,'scoped');assert.equal(me.data.user.id,r.data.client.id);
+ const root=await req('/api/me',undefined,'scoped');assert.notEqual(root.data.user.id,r.data.client.id);
+ assert.equal((await req('/api/management-booking',{...booking(),customer:r.data.client.id})).status,400);
+});
+test('professional can select or create clients and book only their own agenda in either mode',async()=>{
+ await req('/api/me');await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
+ const customer=await req('/api/clients',{name:'Cliente do Profissional',phone:'24988880001'},'barber');assert.equal(customer.status,201,JSON.stringify(customer.data));const id=customer.data.client.id;
+ assert.equal((await req('/api/clients?q=Profissional',undefined,'barber')).data.clients.length,1);
+ assert.equal((await req('/api/management-booking',{...booking(),customer:id},'barber')).status,403);
+ const normal=await req('/api/management-booking',{...booking(),barber:'barber',customer:id,mode:'normal'},'barber');assert.equal(normal.status,201,JSON.stringify(normal.data));
+ assert.equal((await req('/api/management-booking',{...booking(),barber:'barber',customer:id,mode:'normal'},'barber')).status,409);
+ const overlap=await req('/api/management-booking',{...booking(),barber:'barber',customer:id,mode:'overlap'},'barber');assert.equal(overlap.status,201,JSON.stringify(overlap.data));
+ const rows=(await req('/api/appointments',undefined,'barber')).data;assert.equal(rows.filter(a=>a.overlap).length,1);assert.equal(rows.find(a=>a.overlap).id,overlap.data.id);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM slots WHERE appointment_id=?').get(overlap.data.id).n,0);
+});
+test('overlap reservations continue blocking normal availability after cancellation of an underlying reservation',async()=>{
+ await req('/api/me');await initClient();const b={...booking(),service:'corte',customer:'client'};
+ const normal=await req('/api/management-booking',b),overlap=await req('/api/management-booking',{...b,time:'10:15',mode:'overlap'});assert.equal(overlap.status,201);
+ assert.equal((await req('/api/appointment-status',{id:normal.data.id,status:'canceled'})).status,200);
+ assert.ok((await req('/api/slots?date='+nextDate()+'&barber=owner')).data.some(x=>x.time==='10:30'));
+ assert.equal((await req('/api/management-booking',{...b,time:'10:30'})).status,409);
+ assert.equal((await req('/api/appointments',{...b,time:'10:30',mode:'overlap'},'client')).status,409);
+ assert.equal((await req('/api/management-booking',{...b,time:'10:30',mode:'overlap'},'client')).status,403);
+ assert.equal((await req('/api/appointment-status',{id:overlap.data.id,status:'canceled'})).status,200);
+ assert.equal((await req('/api/management-booking',{...b,time:'10:30'})).status,201);
+});
+test('overlap mode respects explicit blocks and schedule; customers cannot carry overlap permission when rescheduling',async()=>{
+ await req('/api/me');await initClient();const b={...booking(),service:'corte',customer:'client',mode:'overlap'};
+ assert.equal((await req('/api/agenda-block',{date:nextDate(),barber:'owner',start:'14:00',end:'15:00'})).status,201);
+ assert.equal((await req('/api/management-booking',{...b,time:'14:15'})).status,409);
+ const first=await req('/api/management-booking',{...b,time:'10:00'});assert.equal(first.status,201);
+ await req('/api/management-booking',{...b,time:'11:00',mode:'normal'});
+ assert.equal((await req('/api/appointment-reschedule',{id:first.data.id,date:nextDate(),time:'11:00'},'client')).status,409);
+ assert.equal((await req('/api/appointment-reschedule',{id:first.data.id,date:nextDate(),time:'11:00'})).status,200);
+});
+
+test('calendar returns the complete requested range and isolates professional access',async()=>{
+ await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
+ for(const [id,barber,date,time,duration,kind,status] of [['cal-a','owner','2026-11-16','14:00',45,'single','scheduled'],['cal-b','barber','2026-11-17','15:00',90,'single','scheduled'],['cal-c','barber','2026-11-18','16:00',45,'block','scheduled'],['cal-old','owner','2026-10-01','14:00',45,'single','scheduled']])db.prepare('INSERT INTO appointments(id,user_id,barber_id,date,time,service,duration,price,kind,status) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,'client',barber,date,time,kind==='block'?'block':'corte',duration,4000,kind,status);
+ const url='/api/calendar?start=2026-11-16&end=2026-11-22',r=await req(url);assert.equal(r.status,200);assert.equal(r.data.days.length,7);assert.equal(r.data.records.length,3);assert.ok(r.data.days.every(d=>d.professionals.some(p=>p.id==='owner')));assert.ok(!JSON.stringify(r.data).includes('24999999999'));
+ const own=await req(url,undefined,'barber');assert.equal(own.status,200);assert.equal(own.data.records.length,2);assert.ok(own.data.records.every(a=>a.barber_id==='barber'));assert.ok(own.data.people.every(p=>p.id==='barber'));
+ assert.equal((await req(url+'&barber=owner',undefined,'barber')).status,403);assert.equal((await req(url,undefined,'client')).status,403);assert.equal((await req(url,undefined,null)).status,401);
+ assert.equal((await req('/api/calendar?start=2026-01-01&end=2026-12-31')).status,400);assert.equal((await req('/api/calendar?start=2026-02-30&end=2026-03-01')).status,400);
+ assert.equal((await req(url+'&barber=barber')).data.records.length,2);
+});
+
+test('team-created clients distinguish access and queue one consented invitation without granting access',async()=>{
+ await req('/api/me');const created=await req('/api/clients',{name:'Cliente Convite',phone:'24987654321',inviteConsent:true});assert.equal(created.status,201);assert.equal(created.data.invitation.status,'pending');const id=created.data.client.id;
+ let listed=(await req('/api/clients')).data.clients.find(x=>x.id===id);assert.equal(listed.accessStatus,'staff_only');assert.equal(listed.invitation.status,'pending');assert.equal(db.prepare('SELECT consent FROM wa_contacts WHERE user_id=?').get(id).consent,0);
+ assert.equal((await req('/api/clients/invite',{id,consent:false})).status,400);
+ await req('/api/clients/invite',{id,consent:true});assert.equal(db.prepare("SELECT COUNT(*) n FROM wa_outbox WHERE kind='client_invite'").get().n,1);
+ const plain=await req('/api/clients',{name:'Cadastro Sem Convite',phone:'24987654322'});assert.equal(plain.status,201);assert.equal(db.prepare("SELECT COUNT(*) n FROM wa_outbox WHERE kind='client_invite'").get().n,1);
+ await req('/api/me',undefined,'client');assert.equal((await req('/api/clients/invite',{id,consent:true},'client')).status,403);
+ db.prepare('INSERT INTO config(key,value) VALUES(?,?)').run('auth:account:'+id,JSON.stringify({password:{hash:'never-expose'}}));listed=(await req('/api/manage')).data.users.find(x=>x.id===id);assert.equal(listed.accessStatus,'active');assert.ok(!JSON.stringify(listed).includes('never-expose'));
+ db.prepare("UPDATE wa_outbox SET status='uncertain' WHERE id=?").run('client-invite:'+id);assert.equal((await req('/api/clients/invite',{id,consent:true})).data.invitation.status,'uncertain');
+});
+
+test('owner hides management profile from every booking channel while preserving professionals and history',async()=>{
+ await req('/api/me');await initClient();await initClient('barber');await req('/api/role',{id:'barber',role:'barber'});
+ const reserved=await req('/api/appointments',booking(),'client');assert.equal(reserved.status,201);
+ assert.equal((await req('/api/professional-visibility',{id:'owner',bookable:false},'client')).status,403);
+ assert.equal((await req('/api/professional-visibility',{id:'owner',bookable:false})).status,200);
+ const me=(await req('/api/me')).data;assert.equal(me.managementBookable,false);assert.ok(!me.barbers.some(x=>x.id==='owner'));assert.ok(me.barbers.some(x=>x.id==='barber'));assert.equal(me.user.role,'manager');
+ assert.equal((await req('/api/appointments',{...booking(),time:'13:00'},'client')).status,400);
+ assert.ok((await req('/api/appointments')).data.some(x=>x.id===reserved.data.id));
+ assert.equal((await req('/api/professional-visibility',{id:'owner',bookable:true})).status,200);
+ assert.ok((await req('/api/me')).data.barbers.some(x=>x.id==='owner'));
+});
+test('availability includes actual work periods without changing the legacy occupied-time API',async()=>{
+ await req('/api/me');const date=nextDate();
+ await req('/api/professional-hours',{barber:'owner',days:[0,1,2,3,4,5,6],periods:[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}]});
+ const base=(await req('/api/slots?barber=owner&date='+date)).data;
+ const detailed=(await req('/api/slots?availability=1&barber=owner&date='+date)).data;
+ assert.deepEqual(detailed.busy,base);assert.deepEqual(detailed.periods,[{open:'10:00',close:'14:00'},{open:'16:00',close:'20:00'}]);
 });

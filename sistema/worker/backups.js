@@ -7,8 +7,30 @@ const un64=s=>Uint8Array.from(atob(s),x=>x.charCodeAt(0));
 const sha=async data=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),x=>x.toString(16).padStart(2,'0')).join('');
 const scope=env=>env.WORKSPACE?.id||'root';
 async function key(env){if(!env.CONNECTION_MASTER_KEY)throw fail('Proteção dos backups não configurada.',503);return crypto.subtle.importKey('raw',un64(env.CONNECTION_MASTER_KEY),{name:'AES-GCM'},false,['encrypt','decrypt'])}
-export async function sealBackup(snapshot,env){const plain=enc.encode(JSON.stringify(snapshot));if(plain.length>8*1024*1024)throw fail('Backup ultrapassou 8 MB. Exige exportação de maior capacidade.',409);const iv=crypto.getRandomValues(new Uint8Array(12)),workspace=scope(env),hash=await sha(plain),cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:enc.encode('joao-backup:'+workspace)},await key(env),plain);return {format:'joao-backup',version:1,workspace,createdAt:snapshot.createdAt,hash,iv:b64(iv),cipher:b64(new Uint8Array(cipher))}}
-export async function openBackup(envelope,env){if(envelope?.format!=='joao-backup'||envelope.version!==1||envelope.workspace!==scope(env))throw fail('Backup pertence a outro espaço ou versão.',403);let plain;try{plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:un64(envelope.iv),additionalData:enc.encode('joao-backup:'+scope(env))},await key(env),un64(envelope.cipher))}catch{throw fail('Não foi possível verificar a proteção deste backup.',409)}if(await sha(plain)!==envelope.hash)throw fail('Integridade do backup inválida.',409);const data=JSON.parse(dec.decode(plain));validateSnapshot(data);return data}
+const MAX_STORED=8*1024*1024,MAX_PLAIN=24*1024*1024;
+async function boundedStream(stream,limit){
+ const reader=stream.getReader(),chunks=[];let length=0;
+ try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>limit)throw fail('Backup excede a capacidade de exportação protegida.',409);chunks.push(value)}}catch(e){await reader.cancel().catch(()=>{});throw e}finally{reader.releaseLock()}
+ const result=new Uint8Array(length);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length}return result;
+}
+const aad=(workspace,version,bytes)=>enc.encode('joao-backup:'+workspace+(version===2?':v2:gzip:'+bytes:''));
+export async function sealBackup(snapshot,env){
+ const plain=enc.encode(JSON.stringify(snapshot));if(plain.length>MAX_PLAIN)throw fail('Backup excede 24 MB. Exige exportação de maior capacidade.',409);
+ const version=plain.length>MAX_STORED?2:1,workspace=scope(env),hash=await sha(plain),iv=crypto.getRandomValues(new Uint8Array(12));
+ // Lossless compression precedes encryption; no table or record is omitted.
+ const payload=version===2?await boundedStream(new Blob([plain]).stream().pipeThrough(new CompressionStream('gzip')),MAX_STORED):plain;
+ const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad(workspace,version,plain.length)},await key(env),payload);
+ return {format:'joao-backup',version,workspace,createdAt:snapshot.createdAt,hash,iv:b64(iv),cipher:b64(new Uint8Array(cipher)),...(version===2?{compression:'gzip',plainBytes:plain.length}:{})};
+}
+export async function openBackup(envelope,env){
+ if(envelope?.format!=='joao-backup'||![1,2].includes(envelope.version)||envelope.workspace!==scope(env))throw fail('Backup pertence a outro espaço ou versão.',403);
+ const compressed=envelope.version===2;
+ if(compressed&&(envelope.compression!=='gzip'||!Number.isInteger(envelope.plainBytes)||envelope.plainBytes<=MAX_STORED||envelope.plainBytes>MAX_PLAIN))throw fail('Estrutura do backup inválida.');
+ if(typeof envelope.cipher!=='string'||envelope.cipher.length>4*Math.ceil((MAX_STORED+16)/3))throw fail('Backup excede a capacidade de exportação protegida.',409);
+ let plain;try{plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:un64(envelope.iv),additionalData:aad(scope(env),envelope.version,envelope.plainBytes)},await key(env),un64(envelope.cipher))}catch{throw fail('Não foi possível verificar a proteção deste backup.',409)}
+ if(compressed){plain=await boundedStream(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip')),envelope.plainBytes);if(plain.length!==envelope.plainBytes)throw fail('Integridade do backup inválida.',409)}
+ if(await sha(plain)!==envelope.hash)throw fail('Integridade do backup inválida.',409);const data=JSON.parse(dec.decode(plain));validateSnapshot(data);return data;
+}
 export function validateSnapshot(s){if(s?.version!==1||!Array.isArray(s.sections)||!s.sections.length||s.sections.length>21)throw fail('Estrutura do backup inválida.');const ids=new Set();for(const section of s.sections){const id=section.id;if(id!=='root'&&!/^[a-f0-9]{32}$/.test(id)||ids.has(id)||!Array.isArray(section.tables)||section.tables.length!==NAMES.length)throw fail('Espaço inválido no backup.');ids.add(id);const seen=new Set();for(const t of section.tables){if(!NAMES.includes(t.name)||seen.has(t.name)||!Array.isArray(t.rows)||t.rows.length>1000)throw fail('Tabela inválida ou incompleta.');seen.add(t.name);for(const row of t.rows)if(!row||typeof row!=='object'||Array.isArray(row)||Object.keys(row).some(x=>!/^[a-z_]+$/.test(x)))throw fail('Registro inválido.')}}return s}
 export async function collectSnapshot(env){
  for(let retry=0;retry<3;retry++){

@@ -1,3 +1,7 @@
+# Estado atual — 16/11/2026
+
+Fonte consolidada da publicação Sites v68 com evoluções JOANA, vídeo real e entradas EU SOU. Leia [reconciliação, testes e pendências](docs/RECONCILIACAO-2026-11-16.md). Não substitua a produção por ramos antigos. Os registros abaixo descrevem etapas históricas e podem ter sido superados.
+
 # Clube do João
 
 Sistema com áreas cliente, barbeiro e gestor. Página de entrada e cadastro públicos; APIs de dados exigem identidade e autorização. Dados persistidos em D1; a prévia usa SQLite em memória e identidade de teste exclusivamente no servidor local.

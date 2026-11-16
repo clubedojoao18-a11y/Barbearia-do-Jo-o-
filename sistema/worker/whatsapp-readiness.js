@@ -19,6 +19,6 @@ export async function whatsappReadiness(db) {
   receiptLabel:receivedAt?'Recebimento real confirmado':'Aguardando recebimento real',
   replyLabel:counts.delivered||counts.read?'Resposta entregue':counts.sent?'Resposta aceita pela Meta':'Resposta ainda não comprovada',
   paymentLabel:paymentBlocked?'Falta cadastrar o cartão na conta WhatsApp. A Meta bloqueia conversas iniciadas pela empresa.':null,
-  businessLabel:businessLimited?'Verificação empresarial pendente. A Meta informa limites na conta; isso não comprova falha de recebimento.':null
+  businessLabel:verification?.whatsapp?.accountHealth?.businessVerification==='rejected'?'Verificação empresarial rejeitada pela Meta. Revise o motivo e a documentação na Central de Segurança.':businessLimited?'Verificação empresarial pendente. A Meta informa limites na conta; isso não comprova falha de recebimento.':null
  };
 }

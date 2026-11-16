@@ -1,3 +1,7 @@
+# Continuidade atual — 16/11/2026
+
+Código consolidado em `sistema/`. Leia [o relatório atual](sistema/docs/RECONCILIACAO-2026-11-16.md) para testes, entradas, custos e bloqueios. GitHub Pages não executa o backend. Os registros abaixo são históricos.
+
 # Barbearia do João — sistema existente
 
 Código em `sistema/`. O `index.html` da raiz é o protótipo antigo e não executa o sistema completo.

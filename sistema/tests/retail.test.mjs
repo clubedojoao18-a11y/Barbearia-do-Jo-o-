@@ -56,12 +56,12 @@ test('fixed 45/90 times override legacy settings; extras fit cut, beard and comb
  assert.equal((await request('/api/catalog',{id:'corte',name:'Corte',minutes:30,price:4000})).status,400);
  assert.equal((await request('/api/catalog',{id:'combo',name:'Corte e barba',minutes:60,price:6000})).status,400);
 });
-test('extra-only bookings reserve all selected extras and release exactly at the end',async()=>{
+test('additional extras change the price but never extend the chosen service interval',async()=>{
  await init();const r=await request('/api/appointments',{...booking(),service:'hidratacao',extras:['pele']},'client');assert.equal(r.status,201);
- const a=sql.prepare('SELECT * FROM appointments WHERE id=?').get(r.data.id);assert.equal(a.duration,60);assert.equal(a.price,6000);
- const busy=(await request('/api/slots?date='+date()+'&barber=owner',undefined,'client')).data.map(x=>x.time);assert.ok(busy.includes('10:45'));assert.ok(!busy.includes('11:00'));
- assert.equal((await request('/api/appointments',{...booking(),time:'10:45'},'client')).status,409);
- assert.equal((await request('/api/appointments',{...booking(),time:'11:00'},'client')).status,201);
+ const a=sql.prepare('SELECT * FROM appointments WHERE id=?').get(r.data.id);assert.equal(a.duration,30);assert.equal(a.price,6000);
+ const busy=(await request('/api/slots?date='+date()+'&barber=owner',undefined,'client')).data.map(x=>x.time);assert.ok(busy.includes('10:15'));assert.ok(!busy.includes('10:30'));assert.ok(!busy.includes('10:45'));
+ assert.equal((await request('/api/appointments',{...booking(),time:'10:30'},'client')).status,201);
+ assert.equal((await request('/api/appointments',{...booking(),time:'11:15'},'client')).status,201);
 });
 test('quarter-hour starts reject overlaps, allow adjacent cuts and revalidate rescheduling atomically',async()=>{
  await init();const r=await request('/api/appointments',booking(),'client');assert.equal(r.status,201);
